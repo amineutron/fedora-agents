@@ -7,6 +7,12 @@
 Serveur MCP (Model Context Protocol) qui expose les agents VM-Controller et Backup-Manager
 via le protocole MCP. Permet a Claude Code de gerer les VMs KVM et les backups directement.
 
+## Demo
+
+![Client MCP : liste des 19 outils, aide, puis etat des VMs KVM](docs/assets/demo.gif)
+
+Enregistree sur la machine reelle avec [`docs/demo/record.sh`](docs/demo/record.sh) : un client MCP minimal ([`docs/demo/mcp_demo.py`](docs/demo/mcp_demo.py)) demarre le serveur en stdio, liste les outils, appelle `help` puis `vm_status` (lecture seule). Les adresses IP sont remplacees par des adresses d'exemple.
+
 ## Architecture
 
 ```
