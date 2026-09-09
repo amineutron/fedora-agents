@@ -98,6 +98,14 @@ ${portabilityTools}
 // Combine tous les outils
 const allTools = [helpTool, ...vmControllerTools, ...backupManagerTools, ...vmPortabilityTools];
 
+// Garde-fou : chaque outil expose DOIT avoir une entree dans TOOL_PERMISSIONS.
+// Sans cela un outil destructif serait servi sans avertissement ni sudo (cas vm_destroy, corrige).
+const missingPermissions = allTools.map((t) => t.name).filter((name) => !(name in TOOL_PERMISSIONS));
+if (missingPermissions.length > 0) {
+  throw new Error(`TOOL_PERMISSIONS incomplete for: ${missingPermissions.join(', ')}`);
+}
+
+
 // Créer le serveur MCP
 const server = new Server(
   {

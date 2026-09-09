@@ -114,6 +114,11 @@ export const TOOL_PERMISSIONS: Record<string, ToolPermission> = {
     dangerous: false,
     description: 'Vérifie qu\'une VM est une copie fidèle du système hôte'
   },
+  vm_destroy: {
+    requiresSudo: true,   // undefine + suppression du stockage dans /var/lib/libvirt/images/
+    dangerous: true,
+    description: 'Supprime définitivement une VM (définition + stockage) : irréversible'
+  },
   vm_clone: {
     requiresSudo: true,
     dangerous: false,
