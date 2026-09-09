@@ -2,6 +2,8 @@
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) [![TypeScript](https://img.shields.io/badge/TypeScript-5-blue.svg)](https://www.typescriptlang.org/)
 
+**English summary.** MCP server that gives an AI agent hands on KVM/libvirt virtual machines and Borg/Timeshift backups on Fedora. Each tool declares whether it needs sudo and whether it is destructive; the client must confirm destructive calls. Arguments are validated with Zod before any script runs. Install with `npx fedora-agents-mcp` (after npm publication) or `npm ci && npm run build`. Security policy and tool table: [SECURITY.md](SECURITY.md).
+
 Serveur MCP (Model Context Protocol) qui expose les agents VM-Controller et Backup-Manager
 via le protocole MCP. Permet a Claude Code de gerer les VMs KVM et les backups directement.
 
@@ -156,3 +158,16 @@ node dist/index.js
 
 La configuration MCP pour Claude Code se fait dans `.claude/settings.local.json`
 (voir le CLAUDE.md a la racine du depot pour les details).
+
+## Part of the Lyra ecosystem
+
+| Dépôt | Rôle |
+|---|---|
+| [lyra](https://github.com/amineutron/lyra) | assistant DevOps vocal, local par défaut (AGPL-3.0) |
+| [fedora-agents](https://github.com/amineutron/fedora-agents) | MCP : machines virtuelles KVM et sauvegardes |
+| [mcp-tracking](https://github.com/amineutron/mcp-tracking) | MCP + API + tableau de bord des tâches longues |
+| [neutroncore](https://github.com/amineutron/neutroncore) | hub PWA du homelab |
+| [hue-mcp](https://github.com/amineutron/hue-mcp) | MCP Philips Hue (fork de ThomasRohde/hue-mcp) |
+| [pylips-mcp](https://github.com/amineutron/pylips-mcp) | MCP TV Philips |
+| [denon-mcp](https://github.com/amineutron/denon-mcp) | MCP ampli Denon |
+| [catt-mcp](https://github.com/amineutron/catt-mcp) | MCP Chromecast et DLNA |
