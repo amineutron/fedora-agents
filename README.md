@@ -1,5 +1,7 @@
 # fedora-agents MCP Server
 
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) [![TypeScript](https://img.shields.io/badge/TypeScript-5-blue.svg)](https://www.typescriptlang.org/)
+
 Serveur MCP (Model Context Protocol) qui expose les agents VM-Controller et Backup-Manager
 via le protocole MCP. Permet a Claude Code de gerer les VMs KVM et les backups directement.
 
