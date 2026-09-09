@@ -120,6 +120,15 @@ sudo find /usr/local/lib/lyra/scripts -type f -name '*.sh' -exec chmod 0755 {} +
 
 ## Configuration
 
+| Variable | Rôle | Défaut |
+|---|---|---|
+| `SCRIPTS_DIR` | dossier des scripts (agents/, kvm/) : copie root pour la production, `scripts/` du dépôt pour les tests | copie root installée par Lyra, sinon `scripts/` |
+| `MCP_AGENTS_LOG_DIR` | journal JSON des appels | `/var/log/mcp-agents` |
+| `scripts/config.env` | chemins KVM, Borg, Timeshift (voir `config.env.example`) | valeurs d'exemple |
+
+Le serveur est un composant de Lyra mais fonctionne seul : `SCRIPTS_DIR=./scripts node dist/index.js` démarre sans sudoers (les outils marqués `requiresSudo` échoueront alors proprement).
+
+
 - Timeouts: `src/config.ts` (TIMEOUTS)
 - Permissions sudo: `src/config.ts` (TOOL_PERMISSIONS)
 - Retry: `src/config.ts` (RETRY_CONFIG)

@@ -38,7 +38,7 @@ export const PATHS = {
   VM_CONTROLLER: resolve(SCRIPTS_DIR, 'agents/vm-controller'),
   BACKUP_MANAGER: resolve(SCRIPTS_DIR, 'agents/backup-manager'),
   KVM_SCRIPTS: resolve(SCRIPTS_DIR, 'kvm'),
-  LOG_DIR: '/var/log/mcp-agents',
+  LOG_DIR: process.env.MCP_AGENTS_LOG_DIR ?? '/var/log/mcp-agents',
 } as const;
 
 // Timeouts par outil (en ms)
