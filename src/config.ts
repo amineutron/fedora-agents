@@ -76,6 +76,13 @@ export interface ToolPermission {
 }
 
 export const TOOL_PERMISSIONS: Record<string, ToolPermission> = {
+  // Aide
+  help: {
+    requiresSudo: false,
+    dangerous: false,
+    description: 'Liste les outils disponibles'
+  },
+
   // VM Controller - lecture
   vm_status: {
     requiresSudo: false,

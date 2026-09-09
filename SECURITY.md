@@ -11,6 +11,7 @@ Tableau généré depuis `src/config.ts` (`npm run security:table`, vérifié en
 <!-- table:start -->
 | Outil | sudo | Dangereux | Rôle |
 |---|---|---|---|
+| `help` | non | non | Liste les outils disponibles |
 | `vm_status` | non | non | Affiche le status d'une VM |
 | `vm_start` | non | non | Démarre une VM |
 | `vm_stop` | non | **oui** | Arrête une VM (peut causer perte de données non sauvegardées) |
