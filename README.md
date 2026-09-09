@@ -130,6 +130,20 @@ Les logs JSON structures sont ecrits dans:
 2. `~/.local/state/mcp-agents/` (fallback utilisateur)
 3. `/tmp/mcp-agents-logs/` (fallback final)
 
+## Installation en une ligne
+
+```bash
+npx fedora-agents-mcp            # apres publication npm ; sinon : npm ci && npm run build && node dist/index.js
+```
+
+Configuration Claude Desktop / Claude Code (`mcpServers`) :
+
+```json
+{ "fedora-agents": { "command": "npx", "args": ["-y", "fedora-agents-mcp"] } }
+```
+
+Politique de securite et tableau des outils : [SECURITY.md](SECURITY.md).
+
 ## Installation et demarrage
 
 ```bash
