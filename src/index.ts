@@ -22,6 +22,7 @@ import { vmControllerTools } from './tools/vm-controller.js';
 import { backupManagerTools } from './tools/backup-manager.js';
 import { vmPortabilityTools } from './tools/vm-portability.js';
 import { TOOL_PERMISSIONS, PATHS } from './config.js';
+import { zodToJsonSchema } from './utils/json-schema.js';
 
 /**
  * Crée le répertoire de logs et retourne le chemin effectif.
@@ -176,7 +177,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request): Promise<{
   } catch (error) {
     // Erreur de validation Zod
     if (error instanceof z.ZodError) {
-      const errorMessages = error.errors
+      const errorMessages = error.issues
         .map((e) => `${e.path.join('.')}: ${e.message}`)
         .join('; ');
 
@@ -214,74 +215,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request): Promise<{
     };
   }
 });
-
-/**
- * Convertit un schema Zod en JSON Schema (simplifié)
- */
-function zodToJsonSchema(schema: z.ZodType): Record<string, unknown> {
-  // Pour les objets Zod, on utilise la méthode de description
-  if (schema instanceof z.ZodObject) {
-    const shape = schema.shape;
-    const properties: Record<string, unknown> = {};
-    const required: string[] = [];
-
-    for (const [key, value] of Object.entries(shape)) {
-      const zodValue = value as z.ZodType;
-      properties[key] = zodTypeToJsonSchema(zodValue);
-
-      // Vérifier si le champ est requis (pas optional)
-      if (!(zodValue instanceof z.ZodOptional) && !(zodValue instanceof z.ZodDefault)) {
-        required.push(key);
-      }
-    }
-
-    return {
-      type: 'object',
-      properties,
-      required: required.length > 0 ? required : undefined,
-    };
-  }
-
-  return { type: 'object' };
-}
-
-function zodTypeToJsonSchema(zodType: z.ZodType): Record<string, unknown> {
-  // Unwrap récursivement optional et default (peuvent être imbriqués)
-  let innerType = zodType;
-
-  while (innerType instanceof z.ZodOptional || innerType instanceof z.ZodDefault) {
-    if (innerType instanceof z.ZodOptional) {
-      innerType = innerType.unwrap();
-    } else if (innerType instanceof z.ZodDefault) {
-      innerType = innerType._def.innerType;
-    }
-  }
-
-  // Types de base
-  if (innerType instanceof z.ZodString) {
-    return { type: 'string' };
-  }
-  if (innerType instanceof z.ZodNumber) {
-    return { type: 'number' };
-  }
-  if (innerType instanceof z.ZodBoolean) {
-    return { type: 'boolean' };
-  }
-  if (innerType instanceof z.ZodEnum) {
-    return {
-      type: 'string',
-      enum: innerType._def.values,
-    };
-  }
-  if (innerType instanceof z.ZodArray) {
-    return {
-      type: 'array',
-      items: zodTypeToJsonSchema(innerType._def.type),
-    };
-  }
-
-  return { type: 'string' };
-}
 
 /**
  * Verifie que chaque script référencé dans PATHS existe sur le disque.

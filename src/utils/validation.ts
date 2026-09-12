@@ -121,7 +121,7 @@ export const vmSnapshotSchema = z.object({
 
 export const vmVerifySchema = z.object({
   vm_name: vmNameSchema.optional().default('neutron-clone'),
-  ip: z.string().ip().optional(),
+  ip: z.union([z.ipv4(), z.ipv6()]).optional(),
   user: z.string().min(1).max(64).optional().default('amineutron'),
   self_check: z.boolean().optional().default(false),
   verbose: z.boolean().optional().default(false),
