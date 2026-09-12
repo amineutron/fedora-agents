@@ -171,8 +171,8 @@ npm run build
 node dist/index.js
 ```
 
-La configuration MCP pour Claude Code se fait dans `.claude/settings.local.json`
-(voir le CLAUDE.md a la racine du depot pour les details).
+La configuration MCP pour Claude Code ou Claude Desktop est decrite dans la section
+[Installation en une ligne](#installation-en-une-ligne).
 
 ## Part of the Lyra ecosystem
 

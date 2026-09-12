@@ -111,7 +111,8 @@ get_md5() {
 
     if [[ "$is_remote" == true ]]; then
         local ip=$(get_vm_ip "$vm")
-        ssh -o "BatchMode=yes" -o "StrictHostKeyChecking=no" -o "LogLevel=ERROR" \
+        vm_ssh_host_opts "$vm"
+        ssh -o "BatchMode=yes" "${VM_SSH_HOST_OPTS[@]}" -o "LogLevel=ERROR" \
             -p "$VM_SSH_PORT" "${SSH_USER}@${ip}" "md5sum '$file' 2>/dev/null" | awk '{print $1}'
     else
         md5sum "$file" 2>/dev/null | awk '{print $1}'
@@ -140,10 +141,10 @@ copy_to_vm() {
     log_info "IP: $ip"
 
     # Options SCP
+    vm_ssh_host_opts "$vm"
     local scp_opts=(
         -o "BatchMode=yes"
-        -o "StrictHostKeyChecking=no"
-        -o "UserKnownHostsFile=/dev/null"
+        "${VM_SSH_HOST_OPTS[@]}"
         -o "LogLevel=ERROR"
         -P "$VM_SSH_PORT"
     )
@@ -209,10 +210,10 @@ copy_from_vm() {
     log_info "IP: $ip"
 
     # Options SCP
+    vm_ssh_host_opts "$vm"
     local scp_opts=(
         -o "BatchMode=yes"
-        -o "StrictHostKeyChecking=no"
-        -o "UserKnownHostsFile=/dev/null"
+        "${VM_SSH_HOST_OPTS[@]}"
         -o "LogLevel=ERROR"
         -P "$VM_SSH_PORT"
     )

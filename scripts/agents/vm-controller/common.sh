@@ -33,6 +33,11 @@ VM_SNAPSHOT_AUTO="${VM_SNAPSHOT_AUTO:-false}"
 VM_LOG_DIR="${VM_LOG_DIR:-/var/log/vm-controller}"
 VM_VERBOSE="${VM_VERBOSE:-false}"
 
+# Cles d'hote SSH des VMs : fichier dedie (jamais ~/.ssh/known_hosts ni /dev/null).
+# La cle est rangee sous "nom-de-vm-uuid" (HostKeyAlias) : un clone qui reprend l'IP d'une VM
+# detruite ou une VM recreee sous le meme nom a un autre UUID, donc une autre entree, sans nettoyage.
+VM_KNOWN_HOSTS="${VM_KNOWN_HOSTS:-${XDG_STATE_HOME:-$HOME/.local/state}/fedora-agents/known_hosts}"
+
 # Charger config utilisateur si elle existe
 [[ -f "$VM_CONFIG_FILE" ]] && source "$VM_CONFIG_FILE"
 
@@ -243,6 +248,20 @@ wait_ip() {
     return 2
 }
 
+# Options SSH communes : cle d'hote acceptee au premier contact (accept-new), refus si elle change ensuite.
+# Usage : vm_ssh_host_opts <vm-name> ; remplit le tableau VM_SSH_HOST_OPTS
+vm_ssh_host_opts() {
+    local vm="$1"
+    local uuid
+    uuid=$($VIRSH domuuid "$vm" 2>/dev/null | tr -d '[:space:]')
+    mkdir -p "$(dirname "$VM_KNOWN_HOSTS")"
+    VM_SSH_HOST_OPTS=(
+        -o "StrictHostKeyChecking=accept-new"
+        -o "UserKnownHostsFile=$VM_KNOWN_HOSTS"
+        -o "HostKeyAlias=${vm}-${uuid:-unknown}"
+    )
+}
+
 # Attend que SSH soit accessible
 # Usage: wait_ssh <vm-name> [timeout]
 # Return: 0 si OK, 2 si timeout
@@ -261,7 +280,8 @@ wait_ssh() {
 
     # Puis attendre que SSH réponde
     while [[ $elapsed -lt $timeout ]]; do
-        if ssh -n -o ConnectTimeout=5 -o BatchMode=yes -o StrictHostKeyChecking=no \
+        vm_ssh_host_opts "$vm"
+        if ssh -n -o ConnectTimeout=5 -o BatchMode=yes "${VM_SSH_HOST_OPTS[@]}" \
            -p "$VM_SSH_PORT" "${VM_SSH_USER}@${ip}" "exit 0" &>/dev/null; then
             log_debug "SSH accessible sur $ip"
             return 0
@@ -288,7 +308,8 @@ is_ssh_accessible() {
     fi
 
     # -n pour ne pas consommer stdin (important dans les boucles while read)
-    ssh -n -o ConnectTimeout=5 -o BatchMode=yes -o StrictHostKeyChecking=no \
+    vm_ssh_host_opts "$vm"
+    ssh -n -o ConnectTimeout=5 -o BatchMode=yes "${VM_SSH_HOST_OPTS[@]}" \
         -p "$VM_SSH_PORT" "${VM_SSH_USER}@${ip}" "exit 0" &>/dev/null
 }
 

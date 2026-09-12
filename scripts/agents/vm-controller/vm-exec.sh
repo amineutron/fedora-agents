@@ -120,10 +120,10 @@ exec_via_ssh() {
     fi
 
     # Options SSH de base
+    vm_ssh_host_opts "$vm"
     local ssh_opts=(
         -o "ConnectTimeout=10"
-        -o "StrictHostKeyChecking=no"
-        -o "UserKnownHostsFile=/dev/null"
+        "${VM_SSH_HOST_OPTS[@]}"
         -o "LogLevel=ERROR"
         -p "$VM_SSH_PORT"
     )
