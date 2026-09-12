@@ -163,6 +163,24 @@ Politique de securite et tableau des outils : [SECURITY.md](SECURITY.md).
 
 ## Installation et demarrage
 
+Paquets a installer sur l'hote (noms Fedora ; Debian/Ubuntu entre parentheses quand ils different) :
+
+| Commande | Paquet | Outils concernes |
+|---|---|---|
+| `virsh` | `libvirt-client` (`libvirt-clients`) | tous les `vm_*` |
+| `virt-clone` | `virt-install` (`virtinst`) | `vm_clone` |
+| `virt-install` | `virt-install` (`virtinst`) | `vm_clone_system` |
+| `qemu-img` | `qemu-img` (`qemu-utils`) | `vm_status`, `vm_clone`, `vm_clone_system`, `vm_import`, `vm_export`, `vm_destroy` |
+| `guestfish` | `guestfs-tools` (`libguestfs-tools`) | `vm_clone` (reseau et GRUB du clone) |
+| `ssh`, `scp` | `openssh-clients` (`openssh-client`) | `vm_exec`, `vm_copy`, `vm_clone` (nom d'hote du clone) |
+| `borg` | `borgbackup` | `backup_*`, `vm_export` |
+| `timeshift` | `timeshift` | `backup_*`, `vm_clone_system` |
+| `rsync` | `rsync` | `backup_create`, `backup_list`, `backup_restore`, `vm_clone_system` |
+| `nmap` (optionnel) | `nmap` | `vm_verify`, `vm_clone` (recherche d'IP sans agent invite) |
+| Node.js >= 18 | `nodejs` | le serveur MCP |
+
+Les cles d'hote SSH des VMs sont conservees dans `$XDG_STATE_HOME/fedora-agents/known_hosts` (a defaut `~/.local/state/fedora-agents/known_hosts`) : premier contact accepte, cle modifiee refusee.
+
 ```bash
 npm install
 npm run build
