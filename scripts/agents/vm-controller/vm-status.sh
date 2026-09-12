@@ -336,7 +336,7 @@ EOF
         echo ""
 
         if [[ -n "$ip" && "$ssh_status" == "Accessible" ]]; then
-            echo "Connexion: ssh ${VM_SSH_USER}@${ip}"
+            echo "Connexion: ssh $(vm_ssh_user "$vm")@${ip}"
         fi
     fi
 }

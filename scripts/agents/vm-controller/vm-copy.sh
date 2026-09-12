@@ -14,7 +14,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
 
 # Options
-SSH_USER="${VM_SSH_USER:-${SUDO_USER:-$USER}}"
+SSH_USER=""  # resolu apres lecture des arguments : --user, puis VM_SSH_USERS, puis VM_SSH_USER
 TO_VM=true  # Défaut: hôte -> VM
 CHECKSUM=false
 PRESERVE=false
@@ -296,6 +296,7 @@ copy_file() {
 
 main() {
     parse_args "$@"
+    SSH_USER="${SSH_USER:-$(vm_ssh_user "$VM_NAME")}"
 
     local result
     if copy_file "$VM_NAME"; then

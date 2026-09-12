@@ -262,6 +262,20 @@ vm_ssh_host_opts() {
     )
 }
 
+# Utilisateur SSH d'une VM : VM_SSH_USERS (paires "nom=utilisateur" separees par des espaces, dans
+# scripts/config.env ou ~/.config/vm-controller/config), sinon VM_SSH_USER, sinon l'utilisateur courant.
+# Les images cloud n'ont pas le compte de l'hote (fedora, ubuntu, arch...). Usage : vm_ssh_user <vm-name>
+vm_ssh_user() {
+    local vm="$1" pair
+    for pair in ${VM_SSH_USERS:-}; do
+        if [[ "${pair%%=*}" == "$vm" && -n "${pair#*=}" ]]; then
+            echo "${pair#*=}"
+            return 0
+        fi
+    done
+    echo "$VM_SSH_USER"
+}
+
 # Attend que SSH soit accessible
 # Usage: wait_ssh <vm-name> [timeout]
 # Return: 0 si OK, 2 si timeout
@@ -282,7 +296,7 @@ wait_ssh() {
     while [[ $elapsed -lt $timeout ]]; do
         vm_ssh_host_opts "$vm"
         if ssh -n -o ConnectTimeout=5 -o BatchMode=yes "${VM_SSH_HOST_OPTS[@]}" \
-           -p "$VM_SSH_PORT" "${VM_SSH_USER}@${ip}" "exit 0" &>/dev/null; then
+           -p "$VM_SSH_PORT" "$(vm_ssh_user "$vm")@${ip}" "exit 0" &>/dev/null; then
             log_debug "SSH accessible sur $ip"
             return 0
         fi
@@ -310,7 +324,7 @@ is_ssh_accessible() {
     # -n pour ne pas consommer stdin (important dans les boucles while read)
     vm_ssh_host_opts "$vm"
     ssh -n -o ConnectTimeout=5 -o BatchMode=yes "${VM_SSH_HOST_OPTS[@]}" \
-        -p "$VM_SSH_PORT" "${VM_SSH_USER}@${ip}" "exit 0" &>/dev/null
+        -p "$VM_SSH_PORT" "$(vm_ssh_user "$vm")@${ip}" "exit 0" &>/dev/null
 }
 
 # ==============================================
@@ -357,7 +371,7 @@ VM Controller Agent v$VM_CONTROLLER_VERSION
 Script: $script_name
 
 Configuration:
-  SSH User: $VM_SSH_USER
+  SSH User: $VM_SSH_USER (par VM : VM_SSH_USERS)
   SSH Port: $VM_SSH_PORT
   Timeout:  ${VM_TIMEOUT}s
   Log Dir:  $VM_LOG_DIR

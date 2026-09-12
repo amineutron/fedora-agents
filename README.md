@@ -131,6 +131,7 @@ sudo find /usr/local/lib/lyra/scripts -type f -name '*.sh' -exec chmod 0755 {} +
 | `SCRIPTS_DIR` | dossier des scripts (agents/, kvm/) : copie root pour la production, `scripts/` du dépôt pour les tests | copie root installée par Lyra, sinon `scripts/` |
 | `MCP_AGENTS_LOG_DIR` | journal JSON des appels | `/var/log/mcp-agents` |
 | `scripts/config.env` | chemins KVM, Borg, Timeshift (voir `config.env.example`) | valeurs d'exemple |
+| `VM_SSH_USER`, `VM_SSH_USERS` | compte SSH des VMs : par defaut, puis par VM (`"fedora-base=fedora ubuntu-base=ubuntu"`), dans `config.env` ou `~/.config/vm-controller/config` | utilisateur courant |
 
 Le serveur est un composant de Lyra mais fonctionne seul : `SCRIPTS_DIR=./scripts node dist/index.js` démarre sans sudoers (les outils marqués `requiresSudo` échoueront alors proprement).
 

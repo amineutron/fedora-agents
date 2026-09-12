@@ -12,7 +12,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
 
 # Options
-SSH_USER="${VM_SSH_USER:-${SUDO_USER:-$USER}}"
+SSH_USER=""  # resolu apres lecture des arguments : --user, puis VM_SSH_USERS, puis VM_SSH_USER
 TIMEOUT="${VM_TIMEOUT:-300}"
 USE_SUDO=false
 CAPTURE_OUTPUT=false
@@ -24,7 +24,7 @@ Usage: $(basename "$0") <vm-name> <command> [OPTIONS]
 Exécute une commande dans une VM KVM via SSH.
 
 Options:
-    --user=USER     User SSH (défaut: $SSH_USER)
+    --user=USER     User SSH (défaut: VM_SSH_USERS pour cette VM, sinon $VM_SSH_USER)
     --timeout=N     Timeout commande (défaut: $TIMEOUT)
     --sudo          Exécute avec sudo (demande le mot de passe interactivement)
     --capture       Mode silencieux, capture output uniquement
@@ -185,6 +185,7 @@ exec_command() {
 
 main() {
     parse_args "$@"
+    SSH_USER="${SSH_USER:-$(vm_ssh_user "$VM_NAME")}"
 
     local result
     if exec_command "$VM_NAME" "$COMMAND"; then
