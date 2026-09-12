@@ -107,22 +107,21 @@ _log_to_file() {
 # Détection sudo/permissions
 # ==============================================
 
-SUDO="sudo"
-VIRSH="sudo virsh -c qemu:///system"
+# libvirt se pilote sans sudo : l'utilisateur est membre du groupe libvirt, que polkit autorise sur
+# qemu:///system. Une regle NOPASSWD sur virsh equivaudrait a root (un domaine peut monter / de l'hote).
+# Les scripts qui ont vraiment besoin de root sont lances en entier via une regle sudoers par script.
+VIRSH="virsh -c qemu:///system"
 
-check_sudo_available() {
-    if [[ $EUID -ne 0 ]] && ! sudo -ln 2>/dev/null | grep -q "virsh\|ALL"; then
-        log_warn "sudo non configure pour virsh -- certaines operations peuvent echouer"
-        log_warn "Ajouter dans /etc/sudoers: $USER ALL=(root) NOPASSWD: /usr/bin/virsh"
+check_libvirt_access() {
+    if [[ $EUID -ne 0 ]] && ! $VIRSH uri &>/dev/null; then
+        log_warn "acces libvirt refuse sur qemu:///system -- ajouter l'utilisateur au groupe libvirt :"
+        log_warn "  sudo usermod -aG libvirt $USER   (puis se reconnecter)"
     fi
 }
 
 setup_virsh_access() {
-    # Toujours utiliser sudo pour les commandes libvirt
-    # (passwordless sudo configuré pour virsh, virt-install, virt-clone, virt-viewer)
     check_optional_dep "virsh" "sudo dnf install libvirt-client" || true
-    check_sudo_available
-    log_debug "Utilisation de sudo pour virsh"
+    check_libvirt_access
 }
 
 # ==============================================

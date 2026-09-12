@@ -102,16 +102,26 @@ Ces scripts sont utilises en interne mais pas directement accessibles via MCP:
 2. `/usr/local/lib/lyra/scripts` : copie `root:root 0755` installee par l'installeur Lyra
 3. `scripts/` du depot (mode developpement)
 
-Les outils qui demandent root (`vm_clone`, `vm_clone_system`, `vm_import`) lancent le
-script via `sudo`. Les regles sudoers doivent viser **uniquement** la copie systeme,
-script par script, jamais un glob sur un dossier inscriptible par l'utilisateur
-(sinon n'importe quel processus de son uid obtient root en y deposant un `.sh`) :
+Les outils sans `sudo` (`vm_status`, `vm_start`, `vm_stop`, `vm_exec`, `vm_copy`, `vm_snapshot`,
+`vm_export`, `vm_verify`) pilotent libvirt directement : l'utilisateur doit etre membre du groupe
+`libvirt`, que polkit autorise sur `qemu:///system` :
+
+```bash
+sudo usermod -aG libvirt "$USER"   # puis se reconnecter
+virsh -c qemu:///system list --all # doit repondre sans sudo
+```
+
+Aucune regle sudoers ne vise `virsh`, `virt-clone` ou `qemu-img` : un `NOPASSWD` sur ces binaires
+equivaut a root (un domaine peut monter le disque de l'hote). Les outils qui demandent root
+(`vm_destroy`, `vm_clone`, `vm_clone_system`, `vm_import` et les `backup_*`) lancent leur script
+entier via `sudo`. Ces regles visent **uniquement** la copie systeme, script par script, jamais un
+glob sur un dossier inscriptible par l'utilisateur (sinon n'importe quel processus de son uid obtient
+root en y deposant un `.sh`) :
 
 ```
 user ALL=(ALL) NOPASSWD: /usr/local/lib/lyra/scripts/kvm/kvm-clone.sh
 user ALL=(ALL) NOPASSWD: /usr/local/lib/lyra/scripts/kvm/kvm-clone-system.sh
 ...
-user ALL=(ALL) NOPASSWD: /usr/bin/virsh, /usr/bin/virt-clone, /usr/bin/qemu-img
 ```
 
 L'installeur Lyra genere ce fichier (`/etc/sudoers.d/lyra`) et le valide avec

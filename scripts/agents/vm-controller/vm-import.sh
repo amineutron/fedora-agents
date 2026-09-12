@@ -696,7 +696,7 @@ main() {
     log_info " Demarrage      : virsh start $NEW_NAME"
     if [[ "$START_AFTER" == false ]]; then
         log_info ""
-        log_info " Pour demarrer  : sudo virsh start $NEW_NAME"
+        log_info " Pour demarrer  : virsh -c qemu:///system start $NEW_NAME"
         log_info " Pour voir      : virt-manager ou virt-viewer"
     fi
     log_info "============================================"

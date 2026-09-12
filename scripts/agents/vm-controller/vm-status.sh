@@ -144,7 +144,8 @@ get_disk_info() {
 
     if [[ -n "$disk" && -f "$disk" ]]; then
         local size=$(du -h "$disk" 2>/dev/null | awk '{print $1}')
-        local virtual=$($SUDO qemu-img info "$disk" 2>/dev/null | grep "virtual size" | awk '{print $3}')
+        # domblkinfo lit la capacite via libvirt : pas besoin de root pour une image qemu:qemu 0600
+        local virtual=$(LC_ALL=C $VIRSH domblkinfo "$vm" "$disk" --human 2>/dev/null | awk -F': *' '/^Capacity/ {print $2}')
         echo "${size:-N/A} / ${virtual:-N/A}"
     else
         echo "N/A"
@@ -156,9 +157,13 @@ get_disk_path() {
     $VIRSH domblklist "$vm" --details 2>/dev/null | grep -E "file\s+disk" | head -1 | awk '{print $4}' || true
 }
 
+# Fichier de base d'un clone COW, d'apres le XML libvirt (lisible sans root, VM arretee comprise)
 get_backing_file() {
-    local disk="$1"
-    $SUDO qemu-img info "$disk" 2>/dev/null | grep "^backing file:" | awk -F': ' '{print $2}' || true
+    local vm="$1"
+    $VIRSH dumpxml "$vm" 2>/dev/null \
+        | sed -n "/<disk type='file' device='disk'>/,/<\/disk>/p" \
+        | sed -n "/<backingStore type='file'>/,/<\/backingStore>/p" \
+        | grep -oP "<source file='\K[^']+" | head -1 || true
 }
 
 get_vm_type() {
@@ -168,7 +173,7 @@ get_vm_type() {
 
     if [[ -n "$disk" && -f "$disk" ]]; then
         local backing
-        backing=$(get_backing_file "$disk")
+        backing=$(get_backing_file "$vm")
         if [[ -n "$backing" ]]; then
             echo "clone COW"
             return
@@ -187,7 +192,7 @@ get_parent_vm() {
     [[ -z "$disk" || ! -f "$disk" ]] && return
 
     local backing
-    backing=$(get_backing_file "$disk")
+    backing=$(get_backing_file "$vm")
     [[ -z "$backing" ]] && return
 
     while IFS= read -r candidate; do
@@ -406,7 +411,7 @@ list_all_vms() {
         disk=$(get_disk_path "$vm")
         if [[ -n "$disk" && -f "$disk" ]]; then
             local backing
-            backing=$(get_backing_file "$disk")
+            backing=$(get_backing_file "$vm")
             if [[ -n "$backing" && -n "${disk_to_vm[$backing]+x}" ]]; then
                 local parent="${disk_to_vm[$backing]}"
                 vm_parent["$vm"]="$parent"

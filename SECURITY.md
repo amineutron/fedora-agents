@@ -44,7 +44,7 @@ Tableau généré depuis `src/config.ts` (`npm run security:table`, vérifié en
 |---|---|
 | L'agent demande la destruction d'une VM | `vm_destroy` est `dangerous` : confirmation humaine côté client ; audit JSON de chaque appel |
 | Injection dans un nom de VM ou un chemin | validation Zod (motifs stricts) avant tout appel de script |
-| Élévation de privilèges | sudoers par script sur une copie root des scripts, `NOPASSWD` limité à ces chemins |
+| Élévation de privilèges | sudoers par script sur une copie root des scripts, `NOPASSWD` limité à ces chemins ; libvirt via le groupe `libvirt` (polkit), aucune règle sudo sur `virsh`, `virt-clone` ou `qemu-img` (équivalente à root) |
 | Restauration d'une mauvaise sauvegarde | `backup_restore` est `dangerous` ; identifiant validé par expression régulière |
 
 ## Versions prises en charge
