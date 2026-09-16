@@ -75,6 +75,20 @@ export interface ToolPermission {
   description: string;
 }
 
+// Outils sans aucun effet de bord : ils lisent un etat, ils ne le modifient pas.
+// Sert a deriver readOnlyHint des ToolAnnotations MCP exposees par list_tools.
+export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
+  'help', 'vm_status', 'vm_verify', 'backup_status', 'backup_list', 'backup_verify'
+]);
+
+// Outils rejouables sans effet cumulatif (relancer ne change rien de plus).
+// vm_snapshot, backup_create, vm_clone ou vm_export creent un objet a chaque
+// appel : ils n'en font pas partie.
+export const IDEMPOTENT_TOOLS: ReadonlySet<string> = new Set([
+  'help', 'vm_status', 'vm_verify', 'backup_status', 'backup_list', 'backup_verify',
+  'vm_start', 'vm_stop', 'vm_destroy', 'vm_copy', 'backup_restore'
+]);
+
 export const TOOL_PERMISSIONS: Record<string, ToolPermission> = {
   // Aide
   help: {

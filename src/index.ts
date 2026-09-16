@@ -21,7 +21,7 @@ import { logger } from './logger.js';
 import { vmControllerTools } from './tools/vm-controller.js';
 import { backupManagerTools } from './tools/backup-manager.js';
 import { vmPortabilityTools } from './tools/vm-portability.js';
-import { TOOL_PERMISSIONS, PATHS } from './config.js';
+import { TOOL_PERMISSIONS, READ_ONLY_TOOLS, IDEMPOTENT_TOOLS, PATHS } from './config.js';
 import { zodToJsonSchema } from './utils/json-schema.js';
 
 /**
@@ -135,6 +135,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         name: tool.name,
         description: tool.description + dangerWarning,
         inputSchema: zodToJsonSchema(tool.inputSchema),
+        // Annotations MCP derivees de TOOL_PERMISSIONS : le client (Lyra) y lit
+        // la dangerosite au lieu de maintenir sa propre liste d'outils.
+        annotations: {
+          readOnlyHint: READ_ONLY_TOOLS.has(tool.name),
+          destructiveHint: permission?.dangerous ?? false,
+          idempotentHint: IDEMPOTENT_TOOLS.has(tool.name),
+          openWorldHint: false,
+        },
       };
     }),
   };
