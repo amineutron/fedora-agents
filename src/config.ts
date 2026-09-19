@@ -117,17 +117,17 @@ export const TOOL_PERMISSIONS: Record<string, ToolPermission> = {
   },
   vm_exec: {
     requiresSudo: false,
-    dangerous: false,
+    dangerous: true,   // commande arbitraire dans la VM (audit Lyra 2026-09-19)
     description: 'Exécute une commande dans une VM'
   },
   vm_copy: {
     requiresSudo: false,
-    dangerous: false,
+    dangerous: true,   // ecrase des fichiers hote/VM (scp)
     description: 'Copie des fichiers vers/depuis une VM'
   },
   vm_snapshot: {
     requiresSudo: false,
-    dangerous: false,
+    dangerous: true,   // revert remplace l'etat, delete supprime
     description: 'Gère les snapshots d\'une VM'
   },
   vm_verify: {
@@ -157,7 +157,7 @@ export const TOOL_PERMISSIONS: Record<string, ToolPermission> = {
   },
   vm_import: {
     requiresSudo: true,   // besoin root pour cp vers /var/lib/libvirt/images/
-    dangerous: false,
+    dangerous: true,   // copie un disque dans libvirt + virsh define
     description: 'Importe une VM depuis une archive exportée par vm_export'
   },
 
