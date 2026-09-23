@@ -15,15 +15,15 @@ Tableau généré depuis `src/config.ts` (`npm run security:table`, vérifié en
 | `vm_status` | non | non | Affiche le status d'une VM |
 | `vm_start` | non | non | Démarre une VM |
 | `vm_stop` | non | **oui** | Arrête une VM (peut causer perte de données non sauvegardées) |
-| `vm_exec` | non | non | Exécute une commande dans une VM |
-| `vm_copy` | non | non | Copie des fichiers vers/depuis une VM |
-| `vm_snapshot` | non | non | Gère les snapshots d'une VM |
+| `vm_exec` | non | **oui** | Exécute une commande dans une VM |
+| `vm_copy` | non | **oui** | Copie des fichiers vers/depuis une VM |
+| `vm_snapshot` | non | **oui** | Gère les snapshots d'une VM |
 | `vm_verify` | non | non | Vérifie qu'une VM est une copie fidèle du système hôte |
 | `vm_destroy` | oui | **oui** | Supprime définitivement une VM (définition + stockage) : irréversible |
 | `vm_clone` | oui | non | Clone une VM existante |
 | `vm_clone_system` | oui | **oui** | Clone le système hôte vers une VM (opération longue) |
 | `vm_export` | non | non | Exporte une VM dans une archive portable avec sanitarisation (mode classic ou exam) |
-| `vm_import` | oui | non | Importe une VM depuis une archive exportée par vm_export |
+| `vm_import` | oui | **oui** | Importe une VM depuis une archive exportée par vm_export |
 | `backup_status` | oui | non | Affiche le dashboard des backups |
 | `backup_list` | oui | non | Liste les backups disponibles |
 | `backup_verify` | oui | non | Vérifie l'intégrité des backups |

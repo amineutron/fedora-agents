@@ -1,6 +1,6 @@
 {
   "name": "fedora-agents-mcp",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "MCP Server for VM-Controller and Backup-Manager agents",
   "repository": {
     "type": "git",
