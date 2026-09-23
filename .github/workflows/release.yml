@@ -1,0 +1,12 @@
+# À chaque tag v* : build, tests, publication npm (Trusted Publishing avec
+# provenance, environnement "npm"), release GitHub avec le tarball.
+name: release
+on:
+  push:
+    tags: ["v*"]
+jobs:
+  release:
+    uses: amineutron/.github/.github/workflows/release-npm.yml@main
+    permissions:
+      id-token: write
+      contents: write
