@@ -1,12 +1,39 @@
-# À chaque tag v* : build, tests, publication npm (Trusted Publishing avec
-# provenance, environnement "npm"), release GitHub avec le tarball.
+# À chaque tag v* : build, tests, publication npm par Trusted Publishing
+# (provenance OIDC, éditeur GitHub Actions déclaré sur npmjs.com, environnement
+# "npm"), release GitHub avec le tarball.
+#
+# Workflow volontairement autonome : les registres (PyPI constaté le 2026-09-24,
+# npm par précaution) comparent le claim job_workflow_ref au fichier déclaré,
+# ce qu'un workflow réutilisable ne satisfait pas.
 name: release
 on:
   push:
     tags: ["v*"]
 jobs:
-  release:
-    uses: amineutron/.github/.github/workflows/release-npm.yml@main
+  publish:
+    runs-on: ubuntu-latest
+    environment: npm
     permissions:
       id-token: write
       contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: https://registry.npmjs.org
+          cache: npm
+      # Trusted Publishing demande npm >= 11.5
+      - run: npm install -g npm@latest
+      - run: npm ci
+      - run: npm run build --if-present
+      - run: npm test --if-present
+      - run: npm pack
+      - run: npm publish --provenance --access public
+      - name: Release GitHub avec le tarball
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1 \
+            || gh release create "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --generate-notes
+          gh release upload "${GITHUB_REF_NAME}" *.tgz --repo "${GITHUB_REPOSITORY}" --clobber
