@@ -1,4 +1,5 @@
 # fedora-agents MCP Server
+<!-- mcp-name: io.github.amineutron/fedora-agents -->
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) [![TypeScript](https://img.shields.io/badge/TypeScript-5-blue.svg)](https://www.typescriptlang.org/)
 
