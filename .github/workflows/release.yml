@@ -1,6 +1,6 @@
 # À chaque tag v* : build, tests, publication npm par Trusted Publishing
 # (provenance OIDC, éditeur GitHub Actions déclaré sur npmjs.com, environnement
-# "npm"), release GitHub avec le tarball.
+# "npm"), release GitHub avec des notes générées par git-cliff et le tarball.
 #
 # Workflow volontairement autonome : les registres (PyPI constaté le 2026-09-24,
 # npm par précaution) comparent le claim job_workflow_ref au fichier déclaré,
@@ -18,6 +18,8 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0   # git-cliff lit l'historique jusqu'au tag précédent
       # Pas de registry-url : setup-node ecrirait un .npmrc avec un jeton
       # fictif (NODE_AUTH_TOKEN=XXXXX) que npm utiliserait a la place de
       # l'echange OIDC du Trusted Publishing -> E404 sur le PUT (2026-09-24).
@@ -32,10 +34,12 @@ jobs:
       - run: npm test --if-present
       - run: npm pack
       - run: npm publish --provenance --access public
-      - name: Release GitHub avec le tarball
+      - name: Notes de release (git-cliff, cliff.toml)
+        run: npx --yes git-cliff@2.14.2 --latest --strip all -o RELEASE_NOTES.md
+      - name: Release GitHub avec les notes et le tarball
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1 \
-            || gh release create "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --generate-notes
+            || gh release create "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --title "${GITHUB_REF_NAME}" --notes-file RELEASE_NOTES.md
           gh release upload "${GITHUB_REF_NAME}" *.tgz --repo "${GITHUB_REPOSITORY}" --clobber
