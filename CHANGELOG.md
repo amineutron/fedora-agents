@@ -1,5 +1,10 @@
 # Changelog - fedora-agents
 
+## [1.2.1] - 2026-09-24
+
+### Changed
+- First release published to npm by GitHub Actions (Trusted Publishing with provenance). The release workflow is self-contained: registries reject OIDC tokens minted inside reusable workflows. 1.2.0 was published by hand.
+
 ## [1.2.0] - 2026-09-24
 
 ### Changed
