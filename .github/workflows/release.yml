@@ -18,10 +18,12 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v7
+      # Pas de registry-url : setup-node ecrirait un .npmrc avec un jeton
+      # fictif (NODE_AUTH_TOKEN=XXXXX) que npm utiliserait a la place de
+      # l'echange OIDC du Trusted Publishing -> E404 sur le PUT (2026-09-24).
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-          registry-url: https://registry.npmjs.org
           cache: npm
       # Trusted Publishing demande npm >= 11.5
       - run: npm install -g npm@latest
