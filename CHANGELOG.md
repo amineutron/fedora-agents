@@ -1,5 +1,11 @@
 # Changelog - fedora-agents
 
+## [1.2.2] - 2026-09-24
+
+### Added
+
+- **registry** : MCP registry manifest and package ownership marker
+
 ## [1.2.1] - 2026-09-24
 
 ### Changed

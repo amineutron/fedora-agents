@@ -1,6 +1,6 @@
 {
   "name": "fedora-agents-mcp",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "mcpName": "io.github.amineutron/fedora-agents",
   "description": "MCP Server for VM-Controller and Backup-Manager agents",
   "repository": {
