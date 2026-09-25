@@ -2,7 +2,7 @@
  * Outils MCP pour Backup-Manager
  */
 
-import { z } from 'zod';
+import type { z } from 'zod';
 import { PATHS } from '../config.js';
 import { execute } from '../utils/executor.js';
 import {

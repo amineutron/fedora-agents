@@ -1,9 +1,9 @@
 # fedora-agents MCP Server
 <!-- mcp-name: io.github.amineutron/fedora-agents -->
 
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) [![TypeScript](https://img.shields.io/badge/TypeScript-5-blue.svg)](https://www.typescriptlang.org/)
+[![CI](https://github.com/amineutron/fedora-agents/actions/workflows/ci.yml/badge.svg)](https://github.com/amineutron/fedora-agents/actions/workflows/ci.yml) [![npm](https://img.shields.io/npm/v/fedora-agents-mcp.svg)](https://www.npmjs.com/package/fedora-agents-mcp) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) [![TypeScript](https://img.shields.io/badge/TypeScript-7-blue.svg)](https://www.typescriptlang.org/)
 
-**English summary.** MCP server that gives an AI agent hands on KVM/libvirt virtual machines and Borg/Timeshift backups on Fedora. Each tool declares whether it needs sudo and whether it is destructive; the client must confirm destructive calls. Arguments are validated with Zod before any script runs. Install with `npx fedora-agents-mcp` (after npm publication) or `npm ci && npm run build`. Security policy and tool table: [SECURITY.md](SECURITY.md).
+**English summary.** MCP server that gives an AI agent hands on KVM/libvirt virtual machines and Borg/Timeshift backups on Fedora. Each tool declares whether it needs sudo and whether it is destructive; the client must confirm destructive calls. Arguments are validated with Zod before any script runs. Install with `npx fedora-agents-mcp` (`--help` lists the settings) or `npm ci && npm run build`. Security policy and tool table: [SECURITY.md](SECURITY.md).
 
 Serveur MCP (Model Context Protocol) qui expose les agents VM-Controller et Backup-Manager
 via le protocole MCP. Permet a Claude Code de gerer les VMs KVM et les backups directement.
@@ -140,7 +140,7 @@ sudo find /usr/local/lib/lyra/scripts -type f -name '*.sh' -exec chmod 0755 {} +
 | Variable | Rôle | Défaut |
 |---|---|---|
 | `SCRIPTS_DIR` | dossier des scripts (agents/, kvm/) : copie root pour la production, `scripts/` du dépôt pour les tests | copie root installée par Lyra, sinon `scripts/` |
-| `MCP_AGENTS_LOG_DIR` | journal JSON des appels | `/var/log/mcp-agents` |
+| `MCP_AGENTS_LOG_DIR` | journaux JSON (serveur, erreurs, audit des appels sous sudo ou destructifs) | `/var/log/mcp-agents` s'il est inscriptible, sinon `$XDG_STATE_HOME/mcp-agents` (`~/.local/state/mcp-agents`) ; fichiers en 0600, jamais dans `/tmp` |
 | `scripts/config.env` | chemins KVM, Borg, Timeshift (voir `config.env.example`) | valeurs d'exemple |
 | `VM_SSH_USER`, `VM_SSH_USERS` | compte SSH des VMs : par defaut, puis par VM (`"fedora-base=fedora ubuntu-base=ubuntu"`), dans `config.env` ou `~/.config/vm-controller/config` | utilisateur courant |
 
@@ -162,7 +162,8 @@ Les logs JSON structures sont ecrits dans:
 ## Installation en une ligne
 
 ```bash
-npx fedora-agents-mcp            # apres publication npm ; sinon : npm ci && npm run build && node dist/index.js
+npx fedora-agents-mcp            # depuis npm ; `npx fedora-agents-mcp --help` pour les reglages
+                                 # depuis un clone : npm ci && npm run build && node dist/index.js
 ```
 
 Configuration Claude Desktop / Claude Code (`mcpServers`) :

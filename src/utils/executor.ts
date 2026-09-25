@@ -2,7 +2,7 @@
  * Exécuteur de scripts bash avec retry, timeout et gestion d'erreurs
  */
 
-import { spawn } from 'child_process';
+import { spawn } from 'node:child_process';
 import { TIMEOUTS, RETRY_CONFIG, ErrorCode, EXIT_CODE_MAP, TOOL_PERMISSIONS } from '../config.js';
 import { logger, generateCorrelationId } from '../logger.js';
 
@@ -224,7 +224,11 @@ export async function execute(options: ExecuteOptions): Promise<ExecuteResult> {
     }
   }
 
-  const result = lastResult!;
+  // maxAttempts >= 1 : au moins une tentative a eu lieu ; on le verifie au lieu de l'affirmer
+  if (lastResult === null) {
+    throw new Error(`execute(${tool}): aucune tentative effectuee`);
+  }
+  const result = lastResult;
 
   // Log final
   logger.toolResult(

@@ -2,7 +2,6 @@
  * Outils MCP pour la portabilite des VMs (export / import)
  */
 
-import { z } from 'zod';
 import { PATHS } from '../config.js';
 import { execute } from '../utils/executor.js';
 import {

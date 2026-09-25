@@ -2,8 +2,9 @@
  * Logger structuré avec support audit
  */
 
-import { createWriteStream, existsSync, mkdirSync } from 'fs';
-import { PATHS } from './config.js';
+import { appendFileSync, createWriteStream } from 'node:fs';
+import os from 'node:os';
+import { logDirCandidates, resolveLogDir } from './log-dir.js';
 
 // Niveaux de log
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
@@ -41,34 +42,31 @@ export function generateCorrelationId(): string {
 
 class Logger {
   private logStream: ReturnType<typeof createWriteStream> | null = null;
-  private auditStream: ReturnType<typeof createWriteStream> | null = null;
+  private auditPath: string | null = null;
   private errorStream: ReturnType<typeof createWriteStream> | null = null;
   private initialized = false;
+  /** Dossier effectivement utilisé (null : stderr seulement). */
+  dir: string | null = null;
 
-  constructor() {
-    this.init();
-  }
-
+  // Initialisation à la première écriture : `--help` n'ouvre aucun fichier.
   private init(): void {
     if (this.initialized) return;
+    this.initialized = true;
 
-    try {
-      // Créer le répertoire de logs si nécessaire
-      if (!existsSync(PATHS.LOG_DIR)) {
-        mkdirSync(PATHS.LOG_DIR, { recursive: true, mode: 0o755 });
-      }
-
-      // Ouvrir les fichiers de log
-      const date = new Date().toISOString().split('T')[0];
-      this.logStream = createWriteStream(`${PATHS.LOG_DIR}/server-${date}.log`, { flags: 'a' });
-      this.auditStream = createWriteStream(`${PATHS.LOG_DIR}/audit-${date}.log`, { flags: 'a' });
-      this.errorStream = createWriteStream(`${PATHS.LOG_DIR}/error-${date}.log`, { flags: 'a' });
-
-      this.initialized = true;
-    } catch {
-      // Si on ne peut pas écrire dans /var/log, on continue sans fichiers
-      console.error('[Logger] Cannot write to log directory, logging to stderr only');
+    // Avant, seul /var/log/mcp-agents était essayé : pour un utilisateur normal
+    // rien n'était écrit sur disque, journal d'audit compris.
+    this.dir = resolveLogDir(logDirCandidates(process.env, os.homedir()));
+    if (this.dir === null) {
+      console.error('[Logger] No writable log directory (MCP_AGENTS_LOG_DIR, /var/log/mcp-agents, ~/.local/state/mcp-agents): logging to stderr only');
+      return;
     }
+    const date = new Date().toISOString().split('T')[0];
+    const open = (name: string) => createWriteStream(`${this.dir}/${name}-${date}.log`, { flags: 'a', mode: 0o600 });
+    this.logStream = open('server');
+    // audit en écriture synchrone : l'entrée est sur disque avant de rendre la main,
+    // même si le processus s'arrête aussitôt (fin de stdin, crash)
+    this.auditPath = `${this.dir}/audit-${date}.log`;
+    this.errorStream = open('error');
   }
 
   private formatEntry(entry: LogEntry): string {
@@ -76,7 +74,8 @@ class Logger {
   }
 
   private write(entry: LogEntry): void {
-    const line = this.formatEntry(entry) + '\n';
+    this.init();
+    const line = `${this.formatEntry(entry)}\n`;
 
     // Toujours écrire sur stderr (pour debug)
     if (entry.level === 'error') {
@@ -154,10 +153,15 @@ class Logger {
       ...entry
     };
 
-    const line = JSON.stringify(auditEntry) + '\n';
+    const line = `${JSON.stringify(auditEntry)}\n`;
 
-    if (this.auditStream) {
-      this.auditStream.write(line);
+    this.init();
+    if (this.auditPath) {
+      try {
+        appendFileSync(this.auditPath, line, { mode: 0o600 });
+      } catch (e) {
+        process.stderr.write(`[Logger] audit write failed: ${(e as Error).message}\n${line}`);
+      }
     }
 
     // Aussi logger normalement
@@ -172,7 +176,6 @@ class Logger {
   // Fermer proprement les streams
   close(): void {
     this.logStream?.end();
-    this.auditStream?.end();
     this.errorStream?.end();
   }
 }

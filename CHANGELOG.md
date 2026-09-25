@@ -1,5 +1,16 @@
 # Changelog - fedora-agents
 
+## [1.3.0] - 2026-09-25
+
+### Fixed
+- **Audit log was never written to disk** for a regular user: the logger only tried `/var/log/mcp-agents` (not writable), so every entry went to stderr. It now resolves `MCP_AGENTS_LOG_DIR`, then `/var/log/mcp-agents`, then `$XDG_STATE_HOME/mcp-agents`; the directory is created 0700 and files 0600. The `/tmp` fallback is gone (an audit log of sudo actions must not be world-readable).
+- Audit entries are written synchronously, so the last one survives an immediate exit (stdin closed, crash).
+- `fedora-agents-mcp --help` / `--version` answer without starting the server or opening any log.
+
+### Added
+- Lint with Biome (`npm run lint`), run in CI; CI and npm badges in the README.
+- Tests: log directory resolution, real audit write, CLI (27 tests).
+
 ## [1.2.2] - 2026-09-24
 
 ### Added

@@ -2,9 +2,9 @@
  * Configuration centrale du serveur MCP
  */
 
-import { fileURLToPath } from 'url';
-import { dirname, resolve } from 'path';
-import { existsSync } from 'fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, resolve } from 'node:path';
+import { existsSync } from 'node:fs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -24,7 +24,7 @@ export const SYSTEM_SCRIPTS_DIR = '/usr/local/lib/lyra/scripts';
 
 export function resolveScriptsDir(env: NodeJS.ProcessEnv = process.env): string {
   const fromEnv = env.LYRA_SCRIPTS_DIR;
-  if (fromEnv && fromEnv.trim()) return resolve(fromEnv);
+  if (fromEnv?.trim()) return resolve(fromEnv);
   if (existsSync(SYSTEM_SCRIPTS_DIR)) return SYSTEM_SCRIPTS_DIR;
   return resolve(__dirname, '../scripts');
 }
@@ -38,7 +38,6 @@ export const PATHS = {
   VM_CONTROLLER: resolve(SCRIPTS_DIR, 'agents/vm-controller'),
   BACKUP_MANAGER: resolve(SCRIPTS_DIR, 'agents/backup-manager'),
   KVM_SCRIPTS: resolve(SCRIPTS_DIR, 'kvm'),
-  LOG_DIR: process.env.MCP_AGENTS_LOG_DIR ?? '/var/log/mcp-agents',
 } as const;
 
 // Timeouts par outil (en ms)

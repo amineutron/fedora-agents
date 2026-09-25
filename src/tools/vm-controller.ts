@@ -2,9 +2,9 @@
  * Outils MCP pour VM-Controller
  */
 
-import { z } from 'zod';
+import type { z } from 'zod';
 import { PATHS } from '../config.js';
-import { execute, buildArgs } from '../utils/executor.js';
+import { execute } from '../utils/executor.js';
 import {
   vmStartSchema,
   vmStopSchema,

@@ -17,8 +17,8 @@ const table = ['| Outil | sudo | Dangereux | Rôle |', '|---|---|---|---|',
   ...rows.map((r) => `| \`${r.name}\` | ${r.sudo ? 'oui' : 'non'} | ${r.dangerous ? '**oui**' : 'non'} | ${r.desc} |`)].join('\n');
 const START = '<!-- table:start -->', END = '<!-- table:end -->';
 const path = new URL('../SECURITY.md', import.meta.url);
-let doc = readFileSync(path, 'utf8');
-const next = doc.slice(0, doc.indexOf(START) + START.length) + '\n' + table + '\n' + doc.slice(doc.indexOf(END));
+const doc = readFileSync(path, 'utf8');
+const next = `${doc.slice(0, doc.indexOf(START) + START.length)}\n${table}\n${doc.slice(doc.indexOf(END))}`;
 if (process.argv.includes('--check')) {
   if (next !== doc) { console.error('SECURITY.md est périmé : lancez npm run security:table'); process.exit(1); }
   console.log(`SECURITY.md à jour (${rows.length} outils)`);

@@ -14,42 +14,20 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 
-import { existsSync, mkdirSync, accessSync, constants } from 'fs';
-import os from 'os';
-import path from 'path';
+import { existsSync } from 'node:fs';
 import { logger } from './logger.js';
 import { vmControllerTools } from './tools/vm-controller.js';
 import { backupManagerTools } from './tools/backup-manager.js';
 import { vmPortabilityTools } from './tools/vm-portability.js';
 import { TOOL_PERMISSIONS, READ_ONLY_TOOLS, IDEMPOTENT_TOOLS, PATHS } from './config.js';
 import { zodToJsonSchema } from './utils/json-schema.js';
+import { cliOutput, packageVersion } from './cli.js';
 
-/**
- * Crée le répertoire de logs et retourne le chemin effectif.
- * Essaie d'abord le répertoire configuré (ex: /var/log/mcp-agents),
- * puis un fallback dans ~/.local/state, puis /tmp.
- */
-function ensureLogDir(): string {
-  const dirs = [
-    PATHS.LOG_DIR,
-    path.join(process.env.XDG_STATE_HOME || path.join(os.homedir(), '.local', 'state'), 'mcp-agents')
-  ];
-  for (const dir of dirs) {
-    try {
-      mkdirSync(dir, { recursive: true });
-      accessSync(dir, constants.W_OK);
-      return dir;
-    } catch {
-      // essayer le suivant
-    }
-  }
-  const fallback = '/tmp/mcp-agents-logs';
-  try {
-    mkdirSync(fallback, { recursive: true });
-  } catch {
-    // rien a faire, /tmp devrait toujours etre accessible
-  }
-  return fallback;
+// --help / --version : répondre et sortir avant de construire le serveur
+const cliText = cliOutput(process.argv.slice(2), packageVersion());
+if (cliText !== null) {
+  process.stdout.write(cliText);
+  process.exit(0);
 }
 
 // Outil help pour lister les capacités
@@ -280,13 +258,10 @@ function validatePaths(): void {
  * Point d'entrée principal
  */
 async function main(): Promise<void> {
-  // Créer le répertoire de logs (avec fallback si /var/log non accessible)
-  const logDir = ensureLogDir();
-
   logger.info('server_start', {
     message: 'Starting Fedora Agents MCP Server',
-    params: { log_dir: logDir },
   });
+  logger.info('log_dir', { params: { log_dir: logger.dir ?? 'stderr' } });
 
   // Valider que tous les scripts référencés sont présents sur le disque
   validatePaths();
