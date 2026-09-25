@@ -9,8 +9,10 @@ name: release
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
 jobs:
   publish:
+    if: ${{ github.event_name == 'push' }}
     runs-on: ubuntu-latest
     environment: npm
     permissions:
@@ -43,3 +45,28 @@ jobs:
           gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1 \
             || gh release create "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --title "${GITHUB_REF_NAME}" --notes-file RELEASE_NOTES.md
           gh release upload "${GITHUB_REF_NAME}" *.tgz --repo "${GITHUB_REPOSITORY}" --clobber
+  # Registre MCP officiel : publie server.json (meme version que le paquet) par
+  # OIDC GitHub, sans connexion manuelle. Aussi lancable seul (workflow_dispatch)
+  # pour remettre le registre a jour sans refaire de release.
+  registry:
+    needs: [publish]
+    if: ${{ always() && (github.event_name == 'workflow_dispatch' || needs.publish.result == 'success') }}
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      MCP_PUBLISHER_VERSION: v1.8.1
+      # sha256 de mcp-publisher_linux_amd64.tar.gz v1.8.1, recoupe avec le bundle sigstore publie
+      MCP_PUBLISHER_SHA256: a06c9096dcb9727c13555b6be26c7effa707b01f06a4c561ba7a3635443cf2cc
+    steps:
+      - uses: actions/checkout@v7
+      - name: Installer mcp-publisher (version et empreinte figees)
+        run: |
+          curl -fsSLo mcp-publisher.tar.gz "https://github.com/modelcontextprotocol/registry/releases/download/${MCP_PUBLISHER_VERSION}/mcp-publisher_linux_amd64.tar.gz"
+          echo "${MCP_PUBLISHER_SHA256}  mcp-publisher.tar.gz" | sha256sum -c -
+          tar xzf mcp-publisher.tar.gz mcp-publisher
+      - name: Connexion au registre (OIDC GitHub)
+        run: ./mcp-publisher login github-oidc
+      - name: Publier server.json
+        run: ./mcp-publisher publish
