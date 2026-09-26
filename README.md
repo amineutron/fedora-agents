@@ -8,6 +8,37 @@
 Serveur MCP (Model Context Protocol) qui expose les agents VM-Controller et Backup-Manager
 via le protocole MCP. Permet a Claude Code de gerer les VMs KVM et les backups directement.
 
+## Pourquoi c'est conçu pour des agents LLM
+
+Un script `virsh` suffit à un humain qui lit la sortie et réagit. Un agent LLM (grand
+modèle de langage) qui pilote des machines a besoin d'autres garanties, et c'est ce que
+ce serveur ajoute autour des scripts :
+
+- **Chaque appel est traçable.** Un identifiant de corrélation est créé par appel d'outil
+  et suit toutes les lignes du journal ; le journal d'audit JSON est écrit de façon
+  synchrone, sur disque avant la réponse à l'agent (`src/logger.ts`).
+- **Le réessai dépend de la nature de l'outil.** Seules les lectures idempotentes
+  (`vm_status`, `backup_status`, `backup_list`, `backup_verify`) sont retentées, trois fois
+  avec un délai croissant de 1, 2 puis 5 s ; une action qui modifie (démarrer, arrêter,
+  restaurer, nettoyer) ne l'est jamais. Une erreur de validation ou de permission arrête
+  tout de suite (`src/utils/executor.ts`).
+- **Le code de sortie devient une erreur typée.** Les scripts renvoient un code (délai
+  dépassé, verrou déjà pris, espace insuffisant...) que le serveur traduit en `ErrorCode`
+  lisible par l'agent, au lieu d'un texte à interpréter (`EXIT_CODE_MAP`, `src/config.ts`).
+- **Les droits root sont donnés script par script.** Aucune règle sudoers sur `virsh`,
+  `virt-clone` ou `qemu-img` ; seuls les scripts système qui en ont besoin sont autorisés,
+  un par un (voir [Emplacement des scripts et sudoers](#emplacement-des-scripts-et-sudoers)).
+- **La progression des tâches longues est publiée.** Clone, export ou sauvegarde reportent
+  leurs étapes à [mcp-tracking](https://github.com/amineutron/mcp-tracking)
+  (`scripts/utils/tracking.sh`) : l'agent vérifie l'avancement plus tard au lieu de bloquer.
+- **Le client sait ce qui est dangereux sans liste à maintenir.** Chaque outil publie ses
+  annotations MCP (`readOnlyHint`, `destructiveHint`, `idempotentHint`) ; Lyra y lit la
+  dangerosité et fait confirmer l'humain avant une action destructrice.
+
+Local-first et self-hosted : tout tourne sur la machine (on-prem), sans service tiers,
+avec un modèle local via Ollama dans [Lyra](https://github.com/amineutron/lyra) ou
+n'importe quel client MCP.
+
 ## Demo
 
 ![Client MCP : liste des 19 outils, aide, puis etat des VMs KVM](docs/assets/demo.gif)
@@ -209,7 +240,7 @@ La configuration MCP pour Claude Code ou Claude Desktop est decrite dans la sect
 
 | Dépôt | Rôle |
 |---|---|
-| [lyra](https://github.com/amineutron/lyra) | assistant DevOps vocal, local par défaut (AGPL-3.0) |
+| [lyra](https://github.com/amineutron/lyra) | French-first voice assistant : assistant DevOps vocal, local par défaut (AGPL-3.0) ; le français familier est compris par des règles avant même d'appeler un modèle, ce qui lui suffit d'un modèle de 0.5B |
 | [fedora-agents](https://github.com/amineutron/fedora-agents) | MCP : machines virtuelles KVM et sauvegardes |
 | [mcp-tracking](https://github.com/amineutron/mcp-tracking) | MCP + API + tableau de bord des tâches longues |
 | [neutroncore](https://github.com/amineutron/neutroncore) | hub PWA du homelab |
