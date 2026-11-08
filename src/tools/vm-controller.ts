@@ -5,6 +5,7 @@
 import type { z } from 'zod';
 import { PATHS } from '../config.js';
 import { execute } from '../utils/executor.js';
+import { currentSnapshotName, insertCurrentLine } from '../utils/snapshot-current.js';
 import {
   vmStartSchema,
   vmStopSchema,
@@ -242,12 +243,18 @@ async function vmSnapshotHandler(params: unknown): Promise<ToolResult> {
     args
   });
 
+  // list : ajoute `Current: <nom>` avant le total (voir utils/snapshot-current.ts)
+  if (result.success && validated.action === 'list') {
+    const current = await currentSnapshotName(validated.vm_name);
+    if (current !== null) return formatResult({ ...result, stdout: insertCurrentLine(result.stdout, current) });
+  }
+
   return formatResult(result);
 }
 
 export const vmSnapshot: ToolDefinition = {
   name: 'vm_snapshot',
-  description: 'Gère les snapshots d\'une VM (create, list, restore, delete)',
+  description: 'Gère les snapshots d\'une VM (create, list, restore, delete). list ajoute une ligne `Current: <nom>` (snapshot courant) avant la ligne `Total:`.',
   inputSchema: vmSnapshotSchema,
   handler: vmSnapshotHandler
 };

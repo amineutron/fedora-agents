@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 // le client MCP ne voyait donc aucun parametre de vm_snapshot ni de backup_create. Necessite npm run build.
 const { zodToJsonSchema } = await import('../dist/utils/json-schema.js');
 const tools = [];
-for (const f of ['vm-controller', 'backup-manager', 'vm-portability']) {
+for (const f of ['vm-controller', 'backup-manager', 'vm-portability', 'vm-hub']) {
   const mod = await import(`../dist/tools/${f}.js`);
   for (const value of Object.values(mod)) if (Array.isArray(value)) tools.push(...value);
 }
@@ -27,4 +27,17 @@ test('les schemas raffines gardent leurs parametres', () => {
 
 test('le dialecte $schema n est pas repete dans inputSchema', () => {
   assert.ok(Object.values(byName).every((s) => !('$schema' in s)));
+});
+
+test('les outils hub exposent leurs parametres, requis et enums', () => {
+  assert.deepEqual(byName.vm_pause.required, ['vm_name']);
+  assert.deepEqual(byName.vm_reboot.required, ['vm_name']);
+  assert.deepEqual(byName.vm_create_from_image.required, ['name', 'image_id']);
+  assert.ok(byName.vm_create_from_image.properties.image_id.enum.includes('debian-cloud'));
+  for (const field of ['vcpus', 'memory_mib', 'disk_gb', 'network', 'ssh_key', 'hostname', 'user', 'start', 'dry_run']) {
+    assert.ok(field in byName.vm_create_from_image.properties, field);
+  }
+  assert.deepEqual(byName.vm_image_fetch.required, ['image_id']);
+  assert.deepEqual(byName.vm_console.properties.type.enum, ['spice', 'vnc', 'auto']);
+  assert.ok('lines' in byName.vm_console_log.properties);
 });

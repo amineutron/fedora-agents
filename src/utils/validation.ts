@@ -5,7 +5,7 @@
 import { z } from 'zod';
 
 // Helper pour accepter boolean ou string "true"/"false"
-const flexibleBoolean = z.preprocess(
+export const flexibleBoolean = z.preprocess(
   (val) => {
     if (typeof val === 'string') {
       if (val.toLowerCase() === 'true') return true;
@@ -18,7 +18,7 @@ const flexibleBoolean = z.preprocess(
 
 // Pattern commun pour les noms de VM
 const vmNamePattern = /^[a-zA-Z0-9][a-zA-Z0-9_-]*$/;
-const vmNameSchema = z.string()
+export const vmNameSchema = z.string()
   .min(1, 'Le nom de VM est requis')
   .max(64, 'Le nom de VM ne doit pas dépasser 64 caractères')
   .regex(vmNamePattern, 'Caractères autorisés: a-z, A-Z, 0-9, _, - (doit commencer par alphanumérique)');

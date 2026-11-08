@@ -54,6 +54,13 @@ export const TIMEOUTS: Record<string, number> = {
   vm_clone_system: 1800_000, // 30 min (clone système entier)
   vm_export: 900_000,     // 15 min (export + virt-sysprep + tarball)
   vm_import: 600_000,     // 10 min (extraction + copie + virsh define)
+  vm_pause: 30_000,
+  vm_resume: 30_000,
+  vm_reboot: 120_000,     // 2 min (arret ACPI + demarrage si wait)
+  vm_create_from_image: 1800_000, // 30 min (virt-builder, copie d'ISO)
+  vm_image_fetch: 1800_000,       // 30 min (telechargement)
+  vm_console: 30_000,
+  vm_console_log: 30_000,
 
   // Backup Manager
   backup_create: 600_000,  // 10 min
@@ -77,7 +84,8 @@ export interface ToolPermission {
 // Outils sans aucun effet de bord : ils lisent un etat, ils ne le modifient pas.
 // Sert a deriver readOnlyHint des ToolAnnotations MCP exposees par list_tools.
 export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
-  'help', 'vm_status', 'vm_verify', 'backup_status', 'backup_list', 'backup_verify'
+  'help', 'vm_status', 'vm_verify', 'backup_status', 'backup_list', 'backup_verify',
+  'vm_console', 'vm_console_log'
 ]);
 
 // Outils rejouables sans effet cumulatif (relancer ne change rien de plus).
@@ -85,7 +93,8 @@ export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
 // appel : ils n'en font pas partie.
 export const IDEMPOTENT_TOOLS: ReadonlySet<string> = new Set([
   'help', 'vm_status', 'vm_verify', 'backup_status', 'backup_list', 'backup_verify',
-  'vm_start', 'vm_stop', 'vm_destroy', 'vm_copy', 'backup_restore'
+  'vm_start', 'vm_stop', 'vm_destroy', 'vm_copy', 'backup_restore',
+  'vm_pause', 'vm_resume', 'vm_image_fetch', 'vm_console', 'vm_console_log'
 ]);
 
 export const TOOL_PERMISSIONS: Record<string, ToolPermission> = {
@@ -160,6 +169,43 @@ export const TOOL_PERMISSIONS: Record<string, ToolPermission> = {
     description: 'Importe une VM depuis une archive exportée par vm_export'
   },
 
+  // VM Hub - cycle de vie, creation, console (libvirt direct, sans sudo)
+  vm_pause: {
+    requiresSudo: false,
+    dangerous: false,
+    description: 'Suspend une VM en marche (reprise avec vm_resume)'
+  },
+  vm_resume: {
+    requiresSudo: false,
+    dangerous: false,
+    description: 'Reprend une VM en pause'
+  },
+  vm_reboot: {
+    requiresSudo: false,
+    dangerous: true,   // force = reset materiel : perte possible de donnees non ecrites
+    description: 'Redémarre une VM (arrêt ACPI, ou reset matériel avec force)'
+  },
+  vm_create_from_image: {
+    requiresSudo: false,
+    dangerous: false,  // crée uniquement (refuse un nom pris) ; dry_run disponible
+    description: 'Crée une VM depuis une image du catalogue (cloud, virt-builder ou ISO)'
+  },
+  vm_image_fetch: {
+    requiresSudo: false,
+    dangerous: false,  // seule sortie réseau : URL https fixes du catalogue interne
+    description: 'Télécharge une image cloud du catalogue dans le dossier d\'images'
+  },
+  vm_console: {
+    requiresSudo: false,
+    dangerous: false,
+    description: 'Donne l\'adresse de la console graphique d\'une VM (sans ouvrir de port)'
+  },
+  vm_console_log: {
+    requiresSudo: false,
+    dangerous: false,
+    description: 'Lit les dernières lignes du journal du port série d\'une VM'
+  },
+
   // Backup Manager - lecture
   backup_status: {
     requiresSudo: true,
@@ -205,7 +251,7 @@ export const RETRY_CONFIG = {
   backoffMs: [1000, 2000, 5000],
 
   // Opérations sans retry (modifications)
-  nonRetryable: ['vm_stop', 'vm_start', 'vm_snapshot', 'backup_restore', 'backup_clean', 'backup_create']
+  nonRetryable: ['vm_stop', 'vm_start', 'vm_snapshot', 'vm_reboot', 'vm_create_from_image', 'backup_restore', 'backup_clean', 'backup_create']
 } as const;
 
 // Codes d'erreur

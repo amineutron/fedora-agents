@@ -2,7 +2,7 @@
 /**
  * Serveur MCP pour les agents Fedora (VM-Controller & Backup-Manager)
  *
- * Ce serveur expose 12 outils pour gérer les VMs KVM et les backups
+ * Ce serveur expose les outils pour gérer les VMs KVM et les backups
  * via le protocole MCP (Model Context Protocol).
  */
 
@@ -19,6 +19,7 @@ import { logger } from './logger.js';
 import { vmControllerTools } from './tools/vm-controller.js';
 import { backupManagerTools } from './tools/backup-manager.js';
 import { vmPortabilityTools } from './tools/vm-portability.js';
+import { vmHubTools } from './tools/vm-hub.js';
 import { TOOL_PERMISSIONS, READ_ONLY_TOOLS, IDEMPOTENT_TOOLS, PATHS } from './config.js';
 import { zodToJsonSchema } from './utils/json-schema.js';
 import { cliOutput, packageVersion } from './cli.js';
@@ -39,6 +40,7 @@ const helpTool = {
     const vmTools = vmControllerTools.map(t => `  - ${t.name}: ${t.description}`).join('\n');
     const backupTools = backupManagerTools.map(t => `  - ${t.name}: ${t.description}`).join('\n');
     const portabilityTools = vmPortabilityTools.map(t => `  - ${t.name}: ${t.description}`).join('\n');
+    const hubTools = vmHubTools.map(t => `  - ${t.name}: ${t.description}`).join('\n');
 
     const helpText = `
 ╔══════════════════════════════════════════════════════════════╗
@@ -54,6 +56,9 @@ ${backupTools}
 📦 OUTILS PORTABILITE (export / import de VMs):
 ${portabilityTools}
 
+🚀 OUTILS HUB (pause, redémarrage, création depuis une image, console):
+${hubTools}
+
 📋 EXEMPLES D'UTILISATION:
   - Lister les VMs: vm_status (sans paramètre)
   - Status d'une VM: vm_status avec vm_name="preprod"
@@ -62,6 +67,7 @@ ${portabilityTools}
   - Lister backups: backup_list
   - Exporter une VM: vm_export avec vm_name="preprod" mode="classic"
   - Importer une VM: vm_import avec archive_path="/path/to/vm.tar.gz"
+  - Créer une VM: vm_create_from_image avec name="test" image_id="debian-cloud" dry_run=true
 
 ⚠️  IMPORTANT: Utilise ces outils pour les VMs et backups.
     N'utilise PAS filesystem pour les opérations VM/backup.
@@ -75,7 +81,7 @@ ${portabilityTools}
 };
 
 // Combine tous les outils
-const allTools = [helpTool, ...vmControllerTools, ...backupManagerTools, ...vmPortabilityTools];
+const allTools = [helpTool, ...vmControllerTools, ...backupManagerTools, ...vmPortabilityTools, ...vmHubTools];
 
 // Garde-fou : chaque outil expose DOIT avoir une entree dans TOOL_PERMISSIONS.
 // Sans cela un outil destructif serait servi sans avertissement ni sudo (cas vm_destroy, corrige).

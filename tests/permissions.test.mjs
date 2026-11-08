@@ -8,7 +8,7 @@ const config = readFileSync(new URL('../src/config.ts', import.meta.url), 'utf8'
 const block = config.slice(config.indexOf('TOOL_PERMISSIONS'), config.indexOf('};', config.indexOf('TOOL_PERMISSIONS')));
 const declared = [...block.matchAll(/^\s{2}([a-z_]+):\s*\{/gm)].map((m) => m[1]);
 
-const toolFiles = ['vm-controller.ts', 'backup-manager.ts', 'vm-portability.ts'];
+const toolFiles = ['vm-controller.ts', 'backup-manager.ts', 'vm-portability.ts', 'vm-lifecycle.ts', 'vm-create.ts', 'vm-image-fetch.ts', 'vm-console.ts'];
 const exposed = [];
 for (const f of toolFiles) {
   try {
@@ -33,4 +33,35 @@ test('les outils destructifs sont marqués dangerous', () => {
 test('vm_destroy exige sudo', () => {
   const entry = block.slice(block.indexOf('  vm_destroy:'));
   assert.match(entry.slice(0, entry.indexOf('}')), /requiresSudo:\s*true/);
+});
+
+// Outils "hub" : pilotage libvirt direct (groupe libvirt), jamais de sudo ; seul le reset force est dangereux.
+const entryOf = (name) => {
+  const entry = block.slice(block.indexOf(`  ${name}:`));
+  return entry.slice(0, entry.indexOf('}'));
+};
+const HUB = ['vm_pause', 'vm_resume', 'vm_reboot', 'vm_create_from_image', 'vm_image_fetch', 'vm_console', 'vm_console_log'];
+
+test('les sept outils hub sont exposes et declares', () => {
+  for (const name of HUB) {
+    assert.ok(exposed.includes(name), `${name} non expose`);
+    assert.ok(declared.includes(name), `${name} sans entree TOOL_PERMISSIONS`);
+  }
+});
+
+test('aucun outil hub ne demande sudo', () => {
+  for (const name of HUB) assert.match(entryOf(name), /requiresSudo:\s*false/, name);
+});
+
+test('vm_reboot (reset force) est dangereux, les autres outils hub ne detruisent rien', () => {
+  assert.match(entryOf('vm_reboot'), /dangerous:\s*true/);
+  for (const name of HUB.filter((n) => n !== 'vm_reboot')) assert.match(entryOf(name), /dangerous:\s*false/, name);
+});
+
+test('annotations : la console est en lecture seule, pause/reprise/telechargement rejouables', () => {
+  const readOnly = config.slice(config.indexOf('READ_ONLY_TOOLS'), config.indexOf(']);', config.indexOf('READ_ONLY_TOOLS')));
+  const idempotent = config.slice(config.indexOf('IDEMPOTENT_TOOLS'), config.indexOf(']);', config.indexOf('IDEMPOTENT_TOOLS')));
+  for (const name of ['vm_console', 'vm_console_log']) assert.match(readOnly, new RegExp(`'${name}'`), name);
+  for (const name of ['vm_pause', 'vm_resume', 'vm_image_fetch']) assert.match(idempotent, new RegExp(`'${name}'`), name);
+  for (const name of ['vm_reboot', 'vm_create_from_image']) assert.doesNotMatch(idempotent, new RegExp(`'${name}'`), name);
 });
