@@ -69,9 +69,18 @@ fedora-agents/
       backup-manager.ts   -- outils backup_create, backup_list, backup_restore,
                              backup_verify, backup_clean, backup_status
       vm-portability.ts   -- outils vm_export, vm_import
+      vm-hub.ts           -- regroupe les outils "hub" ci-dessous (pilotage libvirt direct, sans script) :
+        vm-lifecycle.ts     vm_pause, vm_resume, vm_reboot
+        vm-create.ts        vm_create_from_image
+        vm-image-fetch.ts   vm_image_fetch
+        vm-console.ts       vm_console, vm_console_log
     utils/
       executor.ts     -- execution des scripts bash avec retry, timeout, gestion erreurs
       validation.ts   -- schemas Zod pour tous les parametres d'outils
+      runner.ts       -- couture d'execution des outils hub (virsh, qemu-img, xorriso, virt-builder, curl) :
+                         l'executeur reel en production, un faux dans les tests (setRunner)
+      vm-hub-schemas.ts, vm-images.ts (catalogue interne d'images), vm-domain-xml.ts, cloud-init.ts,
+      snapshot-current.ts, virsh.ts -- schemas et fonctions pures des outils hub
 ```
 
 ## Outils MCP exposes
@@ -90,10 +99,54 @@ Liste tous les outils disponibles avec leurs descriptions.
 | `vm_status` | `vm-controller/vm-status.sh` | Affiche l'etat d'une VM (ou liste toutes) |
 | `vm_exec` | `vm-controller/vm-exec.sh` | Execute une commande dans une VM via SSH |
 | `vm_copy` | `vm-controller/vm-copy.sh` | Copie des fichiers hote <-> VM via SCP |
-| `vm_snapshot` | `vm-controller/vm-snapshot.sh` | Gere les snapshots (create/list/restore/delete) |
+| `vm_snapshot` | `vm-controller/vm-snapshot.sh` | Gere les snapshots (create/list/restore/delete) ; `list` ajoute la ligne `Current: <nom>` (voir ci-dessous) |
 | `vm_verify` | `kvm/verify-vm-clone.sh` | Verifie qu'un clone est fidele au systeme hote |
 | `vm_clone` | `kvm/kvm-clone.sh` | Clone une VM existante (complet ou lie) |
 | `vm_clone_system` | `kvm/kvm-clone-system.sh` | Clone le systeme hote entier vers une VM |
+
+#### `vm_snapshot` action `list` : ligne du snapshot courant
+
+Apres la liste, le serveur interroge `virsh snapshot-current --name <vm>` et insere, **juste avant la ligne `Total:`**, la ligne
+
+```
+Current: <nom-du-snapshot>
+```
+
+Aucune ligne si la VM n'a pas de snapshot courant. Le reste de la sortie est inchange : l'analyseur historique de lyra-control-api (`parse_snapshots`) ignore la ligne (le nom contient un `:` et un espace), un client qui la connait lit le snapshot courant avec `^Current: (\S+)$`. Un nom hors de `[A-Za-z0-9][A-Za-z0-9._:-]*` n'est pas ecrit (la sortie reste analysable).
+
+### VM Hub (pause, redemarrage, creation depuis une image, console)
+
+Ces outils ne passent pas par un script bash : ils pilotent libvirt directement (`virsh -c qemu:///system`, groupe `libvirt`, aucun sudo) et rendent un JSON `{"ok": true, ...}` ou `{"ok": false, "code": "...", "error": "..."}` (`isError` positionne sur un echec). Aucune commande n'est construite par interpolation : les arguments sont des tableaux, valides par schema Zod. Toutes les commandes passent par `src/utils/runner.ts`, ce qui permet de tester sans libvirt.
+
+| Outil | Arguments | Effet |
+|---|---|---|
+| `vm_pause` | `vm_name` | `virsh suspend`. Refuse si la VM n'est pas en marche ; sans effet (`changed: false`) si elle est deja en pause |
+| `vm_resume` | `vm_name` | `virsh resume`. Sans effet si elle est deja en marche ; refuse si elle est arretee |
+| `vm_reboot` | `vm_name`, `force` (faux), `wait` (faux), `timeout` (90 s, 10 a 300) | Par defaut une demande ACPI (`virsh reboot --mode acpi`), reponse immediate. `force` : `virsh reset` (dangereux : perte possible de donnees). `wait` : `virsh shutdown --mode acpi`, attente de l'extinction (`timeout`), puis `virsh start` ; invite qui ignore l'ACPI : erreur `TIMEOUT`, relancer avec `force` |
+| `vm_create_from_image` | `name`, `image_id`, `vcpus` (2), `memory_mib` (conseil du catalogue), `disk_gb` (conseil du catalogue), `network` (`default`), `ssh_key`, `hostname`, `user`, `start` (faux), `dry_run` (faux) | Cree et definit une VM depuis une image du catalogue (voir ci-dessous) |
+| `vm_image_fetch` | `image_id` | Telecharge une image cloud du catalogue dans `VM_IMAGES_DIR` |
+| `vm_console` | `vm_name`, `type` (`spice`, `vnc` ou `auto`) | Adresse de la console graphique d'une VM allumee : socket Unix (`transport: unix`) ou `127.0.0.1:port` (`transport: tcp`), avec `uri` ; `public: true` et un `warning` si l'ecoute n'est pas locale. N'ouvre aucun port et ne pont pas en websocket (a la charge de l'appelant) |
+| `vm_console_log` | `vm_name`, `lines` (100, 1 a 2000) | Dernieres lignes du journal du port serie declare dans le XML de la VM (`<log file>` ou serie de type fichier), 512 Ko au plus, limite a `/var/log/libvirt`, `/var/lib/libvirt`, `VM_IMAGES_DIR` et `VM_CONSOLE_LOG_DIRS` |
+
+`vm_create_from_image` selon le format de l'image (`fmt` du catalogue) :
+
+- `cloud` (image prete qcow2/raw) : copie de l'image dans un volume du pool (`vol-create-as` puis `vol-upload`), agrandissement jusqu'a `disk_gb` (`vol-resize`), graine cloud-init (`user-data`/`meta-data` -> ISO `cidata` par `xorriso`) attachee en lecteur. `user` (defaut : compte de l'image : debian, fedora, ubuntu, arch, cirros) recoit `ssh_key` et sudo sans mot de passe. Sans `ssh_key`, la VM est creee mais inaccessible en ssh (avertissement).
+- `vb` (virt-builder) : `virt-builder <modele> --format qcow2 --size <disk_gb>G --hostname ... --ssh-inject root:string:<cle>` (+ un compte `user` si demande), puis copie du disque dans le pool. `ssh_key` est obligatoire.
+- `iso` : disque qcow2 vide de `disk_gb` Go, ISO copiee dans le pool (`<nom>-install.iso`), demarrage sur le lecteur ; `ssh_key`, `user` et `hostname` sont ignores (avertissement).
+
+Refus avant toute ecriture : nom deja pris (VM ou volume), reseau libvirt inconnu, image absente de `VM_IMAGES_DIR`, image qcow2 avec fichier de base, disque plus petit que l'image. `dry_run` fait ces verifications (lectures seules) puis liste les etapes sans rien creer. En cas d'echec en cours de route, les volumes et la VM crees par l'appel sont supprimes (`rolled_back`). La VM est definie en q35/BIOS, virtio, ecran SPICE sur `127.0.0.1`, canal agent invite et port serie journalise dans `/var/log/libvirt/qemu/<nom>-serial0.log`.
+
+**Catalogue d'images** (`src/utils/vm-images.ts`) : 25 identifiants fixes, identiques a `lib/vm_library.py` de lyra-control-api (`cirros`, `debian-cloud`, `fedora-cloud`, `ubuntu-cloud`, `arch-cloud`, `vb-debian`, `vb-fedora`, `alpine`, `debian-netinst`, `fedora-ws`, `kali`...). L'agent ne fournit jamais d'URL ni de chemin. Un fichier en cache se reconnait comme dans l'API : son nom avant le premier point vaut l'identifiant (`debian-cloud.qcow2`) ou commence par `<id>_` (`alpine_3.22.iso`) ; le tiret n'est pas un separateur. Seules cinq images cloud portent une URL https officielle (cirros 0.6.2, Debian 12 `latest`, Fedora 43, Ubuntu 24.04 `current`, Arch `latest`) ; pour toutes les autres, `vm_image_fetch` repond « image a placer a la main dans ~/vm-images ».
+
+Prerequis des outils hub, en plus de `virsh` : `qemu-img` (lecture de l'image), `xorriso` (graine cloud-init), `virt-builder` (`guestfs-tools`, images `vb-*`), `curl` (`vm_image_fetch`). Reglages :
+
+| Variable | Role | Defaut |
+|---|---|---|
+| `VM_IMAGES_DIR` | dossier des images (lecture), des fichiers de travail temporaires et des telechargements ; meme variable que l'API | `~/vm-images` |
+| `VM_HUB_POOL` | pool libvirt qui recoit les disques de `vm_create_from_image` | `default` |
+| `VM_CONSOLE_LOG_DIRS` | dossiers supplementaires (separes par `:`) ou `vm_console_log` peut lire | aucun |
+
+Pour que `vm_console_log` lise le journal des VMs creees par l'outil, l'utilisateur doit pouvoir lire `/var/log/libvirt/qemu` (reserve a root par defaut) : une seule fois, a la main, par exemple `sudo setfacl -m u:$USER:rx /var/log/libvirt /var/log/libvirt/qemu && sudo setfacl -d -m u:$USER:r /var/log/libvirt/qemu`. Sans cela l'outil repond `PERMISSION_DENIED` avec la liste des dossiers autorises.
 
 ### Backup Manager
 
@@ -216,6 +269,9 @@ Paquets a installer sur l'hote (noms Fedora ; Debian/Ubuntu entre parentheses qu
 | `virt-install` | `virt-install` (`virtinst`) | `vm_clone_system` |
 | `qemu-img` | `qemu-img` (`qemu-utils`) | `vm_status`, `vm_clone`, `vm_clone_system`, `vm_import`, `vm_export`, `vm_destroy` |
 | `guestfish` | `guestfs-tools` (`libguestfs-tools`) | `vm_clone` (reseau et GRUB du clone) |
+| `xorriso` | `xorriso` | `vm_create_from_image` (graine cloud-init des images cloud) |
+| `virt-builder` | `guestfs-tools` (`libguestfs-tools`) | `vm_create_from_image` (images `vb-*`) |
+| `curl` | `curl` | `vm_image_fetch` |
 | `ssh`, `scp` | `openssh-clients` (`openssh-client`) | `vm_exec`, `vm_copy`, `vm_clone` (nom d'hote du clone) |
 | `borg` | `borgbackup` | `backup_*`, `vm_export` |
 | `timeshift` | `timeshift` | `backup_*`, `vm_clone_system` |

@@ -24,6 +24,13 @@ Tableau généré depuis `src/config.ts` (`npm run security:table`, vérifié en
 | `vm_clone_system` | oui | **oui** | Clone le système hôte vers une VM (opération longue) |
 | `vm_export` | non | non | Exporte une VM dans une archive portable avec sanitarisation (mode classic ou exam) |
 | `vm_import` | oui | **oui** | Importe une VM depuis une archive exportée par vm_export |
+| `vm_pause` | non | non | Suspend une VM en marche (reprise avec vm_resume) |
+| `vm_resume` | non | non | Reprend une VM en pause |
+| `vm_reboot` | non | **oui** | Redémarre une VM (arrêt ACPI, ou reset matériel avec force) |
+| `vm_create_from_image` | non | non | Crée une VM depuis une image du catalogue (cloud, virt-builder ou ISO) |
+| `vm_image_fetch` | non | non | Télécharge une image cloud du catalogue dans le dossier d'images |
+| `vm_console` | non | non | Donne l'adresse de la console graphique d'une VM (sans ouvrir de port) |
+| `vm_console_log` | non | non | Lit les dernières lignes du journal du port série d'une VM |
 | `backup_status` | oui | non | Affiche le dashboard des backups |
 | `backup_list` | oui | non | Liste les backups disponibles |
 | `backup_verify` | oui | non | Vérifie l'intégrité des backups |
@@ -35,8 +42,8 @@ Tableau généré depuis `src/config.ts` (`npm run security:table`, vérifié en
 ## Ce que le serveur ne fait pas
 
 - Aucune commande shell construite à partir du texte de l'agent : les arguments sont validés par schéma (Zod) puis passés au script comme arguments séparés, jamais interpolés.
-- Aucune écriture hors des chemins configurés (`PATHS` dans `src/config.ts`).
-- Aucune sortie réseau : le serveur parle en stdio avec son client et lance des scripts locaux.
+- Aucune écriture hors des chemins configurés (`PATHS` dans `src/config.ts`) et, pour les outils de création, hors du dossier d'images (`VM_IMAGES_DIR`, défaut `~/vm-images`) et des volumes du pool libvirt (`VM_HUB_POOL`) : `vm_create_from_image` désigne l'image par un identifiant du catalogue interne (`src/utils/vm-images.ts`), jamais par un chemin ni une URL.
+- Aucune sortie réseau choisie par l'agent : le serveur parle en stdio avec son client et lance des commandes locales. Seules exceptions, sans paramètre libre : `vm_image_fetch` télécharge les adresses https fixes du catalogue (`curl --proto =https`, taille bornée), et `vm_create_from_image` avec une image virt-builder laisse `virt-builder` récupérer son modèle sur le dépôt officiel de libguestfs.
 
 ## Modèle de menace, en bref
 
