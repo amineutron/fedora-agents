@@ -132,8 +132,9 @@ destroy_vm() {
     # Demander confirmation
     confirm_destroy "$vm"
 
-    # Arrêter la VM si elle tourne
-    if is_vm_running "$vm"; then
+    # Arrêter la VM si elle n'est pas éteinte (en marche, en pause, plantée : libvirt
+    # refuse de supprimer les volumes d'un domaine qui a encore un processus)
+    if ! is_vm_stopped "$vm"; then
         log_step "Arrêt de la VM: $vm"
         if ! $VIRSH destroy "$vm" &>/dev/null; then
             log_warn "Impossible d'arrêter la VM, tentative de suppression quand même..."

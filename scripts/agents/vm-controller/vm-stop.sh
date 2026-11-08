@@ -120,8 +120,8 @@ stop_vm() {
         return 1
     fi
 
-    # Vérifier si déjà arrêtée
-    if ! is_vm_running "$vm"; then
+    # Vérifier si déjà arrêtée (une VM en pause n'est PAS arrêtée : elle se force comme les autres)
+    if is_vm_stopped "$vm"; then
         log_info "VM '$vm' déjà arrêtée"
         return 0
     fi
