@@ -174,6 +174,17 @@ is_vm_running() {
     [[ "$state" == "running" ]] || [[ "$state" =~ ^en\ cours ]]
 }
 
+# Vérifie si une VM est éteinte (shut off / fermé / arrêté / éteint)
+# Usage: is_vm_stopped <vm-name>
+# Return: 0 si éteinte, 1 sinon. Une VM en pause, en cours d'arrêt ou plantée
+# N'EST PAS éteinte : elle a encore un processus qemu, que vm-stop doit détruire et
+# que vm-destroy doit couper avant de supprimer les volumes (libvirt refuse sinon).
+is_vm_stopped() {
+    local vm="$1"
+    local state=$(get_vm_state "$vm")
+    [[ "$state" == "shut off" ]] || [[ "$state" =~ ^(ferm|arr[eê]t|[eé]teint) ]]
+}
+
 # ==============================================
 # Fonctions réseau/IP
 # ==============================================
