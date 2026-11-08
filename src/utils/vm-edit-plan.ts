@@ -75,14 +75,17 @@ function memoryStep(vm: string, mib: number): EditStep {
 }
 
 /** Firmware et secure boot ensemble : le secure boot exige l'UEFI (schema). */
-function firmwareStep(vm: string, firmware: 'bios' | 'uefi', secure: boolean | undefined): EditStep {
+function firmwareStep(vm: string, firmware: 'bios' | 'uefi', secure: boolean | undefined, hw: VmHardware): EditStep {
   if (firmware === 'bios') {
-    // <loader>, <nvram> et <firmware> sont retires : libvirt choisit SeaBIOS. Le <smm state='on'/> que
-    // libvirt ajoute pour le secure boot doit partir DANS LA MEME definition (libvirt refuse
-    // firmware=bios tant qu'il est la : "Unable to find 'bios' firmware") : `--xml` = xpath sur tout
-    // le domaine, repetable dans un seul --edit. Le fichier NVRAM reste sur le disque.
+    if (hw.firmware === 'bios') return { fields: ['firmware'], label: 'firmware=bios', attempts: [], skipped: 'firmware deja bios', hot: false };
+    // Fedora ne livre AUCUN descripteur SeaBIOS dans /usr/share/qemu/firmware (edk2-ovmf seulement) :
+    // `<os firmware='bios'>` (selection automatique) echoue toujours ("Unable to find 'bios' firmware").
+    // Il faut RETIRER l'attribut (`<os>` nu = SeaBIOS par defaut) : `./os/@firmware=` (valeur vide) ;
+    // surtout pas `xpath.delete=./os/@firmware`, qui supprime tout l'element <os>. Le <smm state='on'/>
+    // du secure boot doit partir dans la MEME definition (libvirt le refuse avec SeaBIOS). `--xml` = xpath
+    // sur tout le domaine, repetable dans un seul --edit. Le fichier NVRAM reste sur le disque.
     const cmd = virtXml(vm, false, '--edit',
-      '--xml', './os/@firmware=bios',
+      '--xml', './os/@firmware=',
       '--xml', 'xpath.delete=./os/loader',
       '--xml', 'xpath.delete=./os/nvram',
       '--xml', 'xpath.delete=./os/firmware',
@@ -90,6 +93,7 @@ function firmwareStep(vm: string, firmware: 'bios' | 'uefi', secure: boolean | u
     return { fields: ['firmware'], label: 'firmware=bios', attempts: [[cmd]], hot: false };
   }
   if (secure === undefined) {
+    if (hw.firmware === 'uefi') return { fields: ['firmware'], label: 'firmware=uefi', attempts: [], skipped: 'firmware deja uefi', hot: false };
     return { fields: ['firmware'], label: 'firmware=uefi', attempts: [[virtXml(vm, false, '--edit', '--boot', 'uefi')]], hot: false };
   }
   // 1) ancien choix de firmware efface (un chemin OVMF explicite empecherait la selection automatique)
@@ -196,7 +200,7 @@ export function planEdit(input: PlanInput, xml: string): PlanResult {
   if (p.cpu_model !== undefined) {
     steps.push({ fields: ['cpu_model'], label: `modele cpu=${p.cpu_model}`, attempts: [[virtXml(vm, false, '--edit', '--cpu', p.cpu_model)]], hot: false });
   }
-  if (p.firmware !== undefined) steps.push(firmwareStep(vm, p.firmware, p.secure_boot));
+  if (p.firmware !== undefined) steps.push(firmwareStep(vm, p.firmware, p.secure_boot, hw));
   if (p.tpm !== undefined) steps.push(tpmStep(vm, p.tpm, hw));
   if (p.boot_order !== undefined) steps.push(bootOrderStep(vm, p.boot_order, hw));
   if (p.display !== undefined) steps.push(displayStep(vm, p.display, hw));

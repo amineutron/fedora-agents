@@ -118,13 +118,24 @@ test('firmware et secure boot : syntaxes virt-xml (uefi seul, uefi + secure boot
     'virt-xml vm --edit --boot uefi,loader.secure=yes,firmware.feature0.name=secure-boot,firmware.feature0.enabled=yes'
   ]);
   assert.deepEqual(r.applied, ['firmware', 'secure_boot']);
-  // retour au bios : loader/nvram/firmware ET le <smm state='on'/> du secure boot retires dans UNE seule definition
-  // (libvirt refuse firmware=bios tant que smm est la) : option --xml (xpath sur tout le domaine)
+  // retour au bios en UNE definition : l'attribut firmware est RETIRE (valeur vide ; pas de descripteur SeaBIOS
+  // sur Fedora, donc firmware=bios echoue toujours), loader/nvram/firmware et le <smm state='on'/> du secure boot
+  // partent dans le meme appel (option --xml = xpath sur tout le domaine)
   sys = installFakeSystem({ domains: { vm: 'shut off' }, xml: { vm: UEFI } });
   await call({ vm_name: 'vm', firmware: 'bios' });
   assert.deepEqual(sys.writes(), [
-    'virt-xml vm --edit --xml ./os/@firmware=bios --xml xpath.delete=./os/loader --xml xpath.delete=./os/nvram --xml xpath.delete=./os/firmware --xml xpath.delete=./features/smm'
+    'virt-xml vm --edit --xml ./os/@firmware= --xml xpath.delete=./os/loader --xml xpath.delete=./os/nvram --xml xpath.delete=./os/firmware --xml xpath.delete=./features/smm'
   ]);
+  assert.ok(!sys.writes()[0].includes('xpath.delete=./os/@firmware'), 'supprimer l attribut par xpath.delete efface tout <os>');
+  // deja bios (sans attribut) / deja uefi : rien n'est lance
+  sys = system('shut off');
+  let same = parse(await call({ vm_name: 'vm', firmware: 'bios' }));
+  assert.deepEqual(sys.writes(), []);
+  assert.deepEqual(same.skipped, ['firmware deja bios']);
+  sys = installFakeSystem({ domains: { vm: 'shut off' }, xml: { vm: UEFI } });
+  same = parse(await call({ vm_name: 'vm', firmware: 'uefi' }));
+  assert.deepEqual(sys.writes(), []);
+  assert.deepEqual(same.skipped, ['firmware deja uefi']);
 });
 
 test('tpm, cpu_model, display, boot_order : virt-xml --edit / --add-device, sans effet si deja conforme', async () => {
