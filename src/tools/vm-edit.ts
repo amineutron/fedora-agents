@@ -161,7 +161,7 @@ export const vmEdit: ToolDefinition = {
     '"optionnel au demarrage" : la VM demarre meme si le peripherique est absent), display (spice | vnc),',
     'network (reseau libvirt), disk_grow_gb (agrandit le premier disque de N Gio par virsh vol-resize : le disque',
     'doit etre le volume d\'un pool libvirt ; le systeme de fichiers de l\'invite reste a agrandir).',
-    'Retour au bios depuis l\'UEFI : loader, nvram, firmware et smm sont retires de la configuration, le fichier NVRAM reste sur le disque.',
+    'Retour au bios depuis l\'UEFI : loader, nvram, firmware et smm sont retires en une seule definition, le fichier NVRAM reste sur le disque.',
     `VM ARRETEE obligatoire pour : ${VM_EDIT_NEEDS_STOP.join(', ')} (refus avant toute modification sinon).`,
     `Appliques a chaud quand la VM tourne : ${VM_EDIT_HOT.join(', ')}. Les autres s'ecrivent dans la configuration`,
     'et prennent effet au prochain demarrage. En cas d\'erreur, la reponse liste ce qui a deja ete applique.',

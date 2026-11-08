@@ -78,11 +78,16 @@ function memoryStep(vm: string, mib: number): EditStep {
 function firmwareStep(vm: string, firmware: 'bios' | 'uefi', secure: boolean | undefined): EditStep {
   if (firmware === 'bios') {
     // <loader>, <nvram> et <firmware> sont retires : libvirt choisit SeaBIOS. Le <smm state='on'/> que
-    // libvirt ajoute pour le secure boot est retire aussi (SeaBIOS n'y est pas compatible : "Unable to
-    // find 'bios' firmware"). Une seule operation par appel virt-xml : deux commandes. Le fichier NVRAM reste.
-    const boot = virtXml(vm, false, '--edit', '--boot', 'firmware=bios,xpath1.delete=./loader,xpath2.delete=./nvram,xpath3.delete=./firmware');
-    const smm = virtXml(vm, false, '--edit', '--features', 'xpath1.delete=./smm');
-    return { fields: ['firmware'], label: 'firmware=bios', attempts: [[boot, smm]], hot: false };
+    // libvirt ajoute pour le secure boot doit partir DANS LA MEME definition (libvirt refuse
+    // firmware=bios tant qu'il est la : "Unable to find 'bios' firmware") : `--xml` = xpath sur tout
+    // le domaine, repetable dans un seul --edit. Le fichier NVRAM reste sur le disque.
+    const cmd = virtXml(vm, false, '--edit',
+      '--xml', './os/@firmware=bios',
+      '--xml', 'xpath.delete=./os/loader',
+      '--xml', 'xpath.delete=./os/nvram',
+      '--xml', 'xpath.delete=./os/firmware',
+      '--xml', 'xpath.delete=./features/smm');
+    return { fields: ['firmware'], label: 'firmware=bios', attempts: [[cmd]], hot: false };
   }
   if (secure === undefined) {
     return { fields: ['firmware'], label: 'firmware=uefi', attempts: [[virtXml(vm, false, '--edit', '--boot', 'uefi')]], hot: false };

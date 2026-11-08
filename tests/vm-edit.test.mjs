@@ -118,12 +118,12 @@ test('firmware et secure boot : syntaxes virt-xml (uefi seul, uefi + secure boot
     'virt-xml vm --edit --boot uefi,loader.secure=yes,firmware.feature0.name=secure-boot,firmware.feature0.enabled=yes'
   ]);
   assert.deepEqual(r.applied, ['firmware', 'secure_boot']);
-  // retour au bios : loader/nvram/firmware retires, puis le <smm state='on'/> du secure boot (SeaBIOS incompatible) ; deux operations = deux appels
+  // retour au bios : loader/nvram/firmware ET le <smm state='on'/> du secure boot retires dans UNE seule definition
+  // (libvirt refuse firmware=bios tant que smm est la) : option --xml (xpath sur tout le domaine)
   sys = installFakeSystem({ domains: { vm: 'shut off' }, xml: { vm: UEFI } });
   await call({ vm_name: 'vm', firmware: 'bios' });
   assert.deepEqual(sys.writes(), [
-    'virt-xml vm --edit --boot firmware=bios,xpath1.delete=./loader,xpath2.delete=./nvram,xpath3.delete=./firmware',
-    'virt-xml vm --edit --features xpath1.delete=./smm'
+    'virt-xml vm --edit --xml ./os/@firmware=bios --xml xpath.delete=./os/loader --xml xpath.delete=./os/nvram --xml xpath.delete=./os/firmware --xml xpath.delete=./features/smm'
   ]);
 });
 
