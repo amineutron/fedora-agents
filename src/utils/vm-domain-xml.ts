@@ -16,6 +16,16 @@ export function xmlEscape(value: string): string {
     .replace(/'/g, '&apos;');
 }
 
+/** Inverse de xmlEscape : les cinq entites predefinies, telles que libvirt les ecrit. */
+export function xmlUnescape(value: string): string {
+  return value
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, '&');
+}
+
 // Chemin de volume rendu par `virsh vol-path` : absolu, caracteres surs, pas de `..`
 const VOLUME_PATH = /^\/[A-Za-z0-9._/-]+$/;
 export function isSafeVolumePath(path: string): boolean {
@@ -121,11 +131,11 @@ export interface XmlElement {
   body: string;
 }
 
-/** Attributs d'une balise ouvrante, quel que soit leur ordre ou le type de guillemets. */
+/** Attributs d'une balise ouvrante (entites decodees), quel que soit leur ordre ou le type de guillemets. */
 export function attrs(tag: string): Record<string, string> {
   const out: Record<string, string> = {};
   for (const m of tag.matchAll(/([A-Za-z_:][\w:.-]*)\s*=\s*(?:'([^']*)'|"([^"]*)")/g)) {
-    out[m[1]] = m[2] ?? m[3] ?? '';
+    out[m[1]] = xmlUnescape(m[2] ?? m[3] ?? '');
   }
   return out;
 }

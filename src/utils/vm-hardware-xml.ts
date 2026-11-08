@@ -6,7 +6,10 @@
  * robustes a l'ordre des attributs et au type de guillemets.
  */
 
-import { elements, type XmlElement } from './vm-domain-xml.js';
+import { elements, xmlUnescape, type XmlElement } from './vm-domain-xml.js';
+
+/** Texte d'un element (entites decodees), ou undefined s'il manque. */
+const text = (el: XmlElement | undefined): string | undefined => (el === undefined ? undefined : xmlUnescape(el.body.trim()));
 
 export type Firmware = 'bios' | 'uefi';
 export type BootDevice = 'hd' | 'cdrom' | 'network';
@@ -45,7 +48,7 @@ function cpuModel(xml: string): string | null {
   if (!cpu) return null;
   const mode = cpu.attrs.mode;
   if (mode === 'host-passthrough' || mode === 'host-model') return mode;
-  const model = elements(cpu.body, 'model')[0]?.body.trim();
+  const model = text(elements(cpu.body, 'model')[0]);
   return model ? model : (mode ?? null);
 }
 
@@ -130,7 +133,7 @@ export function parseHardwareXml(xml: string): VmHardware {
   const { firmware, secure } = firmwareOf(os);
   const graphics = elements(devices, 'graphics')[0]?.attrs.type;
   const vcpus = Number(elements(xml, 'vcpu')[0]?.body.trim());
-  const description = elements(xml, 'description')[0]?.body.trim();
+  const description = text(elements(xml, 'description')[0]);
   return {
     cpu_model: cpuModel(xml),
     firmware,

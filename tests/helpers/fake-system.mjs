@@ -18,7 +18,8 @@ const flag = (args, name) => args[args.indexOf(name) + 1];
  * @param {string[]} [init.networks]
  * @param {string[]} [init.volumes]               volumes deja presents dans le pool
  * @param {Record<string,object>} [init.images]   chemin -> sortie JSON de `qemu-img info`
- * @param {Record<string,string>} [init.xml]      nom de VM -> XML rendu par dumpxml
+ * @param {Record<string,string>} [init.xml]      nom de VM -> XML rendu par dumpxml (live)
+ * @param {Record<string,string>} [init.xmlInactive]  nom de VM -> XML rendu par `dumpxml --inactive` (defaut : le live)
  * @param {Record<string,Array<{type:string,device:string,target:string,source:string}>>} [init.blocks]  nom de VM -> lignes de domblklist
  * @param {Record<string,number>} [init.capacities]  cible de disque -> capacite en octets (domblkinfo)
  * @param {Record<string,string>} [init.volPools]   chemin de volume -> pool libvirt (vol-pool) ; absent = pas un volume
@@ -100,7 +101,11 @@ export function installFakeSystem(init = {}) {
         return res(0, `Domain '${name}' defined\n`);
       }
       case 'undefine': delete state.domains[vm]; return res(0);
-      case 'dumpxml': return vm in state.xml ? res(0, state.xml[vm]) : res(1, '', `error: failed to get domain '${vm}'`);
+      case 'dumpxml': {
+        const name = rest.find((a) => !a.startsWith('--'));
+        const xml = rest.includes('--inactive') ? (init.xmlInactive?.[name] ?? state.xml[name]) : state.xml[name];
+        return xml !== undefined ? res(0, xml) : res(1, '', `error: failed to get domain '${name}'`);
+      }
       case 'snapshot-current':
         return state.snapshotCurrent ? res(0, `${state.snapshotCurrent}\n`) : res(1, '', 'error: domain has no current snapshot');
       default: return res(1, '', `fake virsh: sous-commande inattendue ${sub}`);

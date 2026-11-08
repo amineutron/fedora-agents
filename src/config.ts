@@ -62,7 +62,7 @@ export const TIMEOUTS: Record<string, number> = {
   vm_console: 30_000,
   vm_console_log: 30_000,
   vm_hardware: 30_000,
-  vm_edit: 300_000,       // 5 min (virt-xml par champ, qemu-img resize)
+  vm_edit: 300_000,       // 5 min (virt-xml par champ, virsh vol-resize)
 
   // Backup Manager
   backup_create: 600_000,  // 10 min

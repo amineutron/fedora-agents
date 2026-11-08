@@ -90,9 +90,14 @@ type Confined = { real: string } | { issue: LogIssue };
 const errnoOf = (error: unknown): string => (error as { code?: string } | null)?.code ?? '';
 const issueOf = (error: unknown): LogIssue => (/^(EACCES|EPERM)$/.test(errnoOf(error)) ? 'droits' : 'absent');
 
-/** Chemin reel du journal s'il est un fichier ordinaire sous une racine autorisee. */
+const underRoot = (path: string, root: string): boolean => path.startsWith(`${root.replace(/\/+$/, '')}${sep}`);
+
+/**
+ * Chemin reel du journal s'il est un fichier ordinaire sous une racine autorisee. Un chemin declare
+ * hors des racines est `hors_racines` d'emblee : on ne dit pas s'il existe ou s'il est protege.
+ */
 async function confinedLog(path: string, roots: readonly string[]): Promise<Confined> {
-  if (!path.startsWith('/') || path.includes('..')) return { issue: 'hors_racines' };
+  if (!path.startsWith('/') || path.includes('..') || !roots.some((r) => underRoot(path, r))) return { issue: 'hors_racines' };
   let real: string;
   try {
     real = await realpath(path);
@@ -106,10 +111,13 @@ async function confinedLog(path: string, roots: readonly string[]): Promise<Conf
     } catch {
       continue;
     }
-    if (real.startsWith(realRoot + sep)) return { real };
+    if (underRoot(real, realRoot)) return { real };
   }
   return { issue: 'hors_racines' };
 }
+
+// Plusieurs journaux candidats : la raison la plus grave l'emporte (droits > absent > hors racines)
+const SEVERITY: Record<LogIssue, number> = { hors_racines: 0, absent: 1, droits: 2 };
 
 const ISSUE_TEXT: Record<LogIssue, string> = {
   absent: 'le fichier n\'existe pas : VM definie sans journal serie (<log file>), ou jamais demarree depuis sa definition',
@@ -165,11 +173,14 @@ async function vmConsoleLogHandler(params: unknown): Promise<ToolResult> {
   }
 
   const roots = serialLogRoots();
-  let last: { path: string; issue: LogIssue } | null = null;
+  let worst: { path: string; issue: LogIssue } | null = null;
+  const note = (path: string, issue: LogIssue): void => {
+    if (worst === null || SEVERITY[issue] > SEVERITY[worst.issue]) worst = { path, issue };
+  };
   for (const candidate of declared) {
     const confined = await confinedLog(candidate.path, roots);
     if ('issue' in confined) {
-      last = { path: candidate.path, issue: confined.issue };
+      note(candidate.path, confined.issue);
       continue;
     }
     try {
@@ -178,14 +189,14 @@ async function vmConsoleLogHandler(params: unknown): Promise<ToolResult> {
       return ok({ vm, state: lookup.state, source: candidate.path, kind: candidate.kind, lines: out, count: out.length, truncated });
     } catch (error) {
       if (!/^(EACCES|EPERM|ENOENT)$/.test(errnoOf(error))) throw error;
-      last = { path: candidate.path, issue: issueOf(error) };
+      note(candidate.path, issueOf(error));
     }
   }
-  const issue = last?.issue ?? 'absent';
+  const found: { path: string; issue: LogIssue } = worst ?? { path: declared[0].path, issue: 'absent' };
   return fail(
-    issue === 'absent' ? ErrorCode.VALIDATION_ERROR : ErrorCode.PERMISSION_DENIED,
-    `Journal serie de '${vm}' illisible (${last?.path}) : ${ISSUE_TEXT[issue]}`,
-    { path: last?.path ?? null, reason: issue, allowed_roots: roots }
+    found.issue === 'absent' ? ErrorCode.VALIDATION_ERROR : ErrorCode.PERMISSION_DENIED,
+    `Journal serie de '${vm}' illisible (${found.path}) : ${ISSUE_TEXT[found.issue]}`,
+    { path: found.path, reason: found.issue, allowed_roots: roots }
   );
 }
 

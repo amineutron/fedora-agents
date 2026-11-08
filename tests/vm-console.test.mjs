@@ -156,6 +156,30 @@ test('vm_console_log : journal absent -> VALIDATION_ERROR "fichier absent", pas 
   assert.ok(parse(r).allowed_roots.includes('/var/log/libvirt'));
 });
 
+test('vm_console_log : un chemin hors des racines est "hors_racines", qu il existe ou non (on ne sonde pas le disque)', async () => {
+  const allowed = mkdtempSync(join(tmpdir(), 'fa-allowed-'));
+  process.env.VM_CONSOLE_LOG_DIRS = allowed;
+  const outside = join(mkdtempSync(join(tmpdir(), 'fa-out-')), 'nope.log');
+  installFakeSystem({ domains: { vm: 'running' }, xml: { vm: dom('', `<serial type='file'><source path='${outside}'/></serial>`) } });
+  const r = parse(await vmConsoleLog.handler({ vm_name: 'vm' }));
+  assert.equal(r.reason, 'hors_racines');
+  assert.equal(r.code, 'PERMISSION_DENIED');
+});
+
+test('vm_console_log : plusieurs candidats -> la raison la plus grave l emporte (droits > absent > hors racines)', { skip: process.getuid?.() === 0 && 'root lit tout' }, async () => {
+  const { allowed } = logSetup(null);
+  const locked = join(allowed, 'locked.log');
+  writeFileSync(locked, 'x\n');
+  chmodSync(locked, 0o000);
+  const serial = `<serial type='pty'><log file='${join(allowed, 'vm-serial0.log')}' append='on'/></serial>`
+    + `<serial type='file'><source path='${locked}'/></serial><serial type='file'><source path='/elsewhere/x.log'/></serial>`;
+  installFakeSystem({ domains: { vm: 'running' }, xml: { vm: dom('', serial) } });
+  const r = parse(await vmConsoleLog.handler({ vm_name: 'vm' }));
+  assert.equal(r.reason, 'droits');
+  assert.equal(r.path, locked);
+  assert.equal(r.code, 'PERMISSION_DENIED');
+});
+
 test('vm_console_log : journal present mais illisible -> PERMISSION_DENIED "droits insuffisants" (setfacl)', { skip: process.getuid?.() === 0 && 'root lit tout' }, async () => {
   const { logPath } = logSetup('secret\n');
   chmodSync(logPath, 0o000);

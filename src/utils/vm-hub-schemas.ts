@@ -122,9 +122,10 @@ export const vmEditSchema = z.object({
   vcpus: z.number().int().min(VM_EDIT_LIMITS.vcpus.min).max(VM_EDIT_LIMITS.vcpus.max).optional(),
   memory_mib: z.number().int().min(VM_EDIT_LIMITS.memory_mib.min).max(VM_EDIT_LIMITS.memory_mib.max).optional(),
   autostart: flexibleBoolean.optional(),
-  /** Chaine vide = effacer la description */
+  /** Chaine vide = effacer la description. Jamais de `-` en tete : virsh y lirait une option. */
   description: z.string().max(VM_EDIT_LIMITS.description)
-    .refine((v) => !hasControlChar(v), 'Caracteres de controle interdits').optional(),
+    .refine((v) => !hasControlChar(v), 'Caracteres de controle interdits')
+    .refine((v) => !v.startsWith('-'), 'La description ne peut pas commencer par un tiret').optional(),
   cpu_model: z.enum(VM_EDIT_LIMITS.cpu_models).optional(),
   firmware: z.enum(['bios', 'uefi']).optional(),
   tpm: flexibleBoolean.optional(),

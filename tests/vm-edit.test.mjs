@@ -22,7 +22,7 @@ test('constantes exportees et vmEditNeedsStop', () => {
 });
 
 test('schema : au moins un champ, secure_boot exige uefi, boot_order sans doublon, usb distincts, strict', () => {
-  const bad = (input) => assert.equal(vmEditSchema.safeParse({ vm_name: 'vm', ...input }).success, false, JSON.stringify(input));
+  const bad = (input, why = '') => assert.equal(vmEditSchema.safeParse({ vm_name: 'vm', ...input }).success, false, `${JSON.stringify(input)} ${why}`);
   bad({});
   bad({ secure_boot: true });
   bad({ secure_boot: false, firmware: 'bios' });
@@ -34,22 +34,42 @@ test('schema : au moins un champ, secure_boot exige uefi, boot_order sans doublo
   bad({ disk_grow_gb: 0 });
   bad({ disk_grow_gb: -5 });
   bad({ description: 'a\u0007b' });
+  bad({ description: '-x' }, 'un tiret en tete serait lu comme une option par virsh');
+  bad({ description: '--config' });
+  for (const network of ['-lab', 'a,model=e1000', 'a=b', 'lab net']) bad({ network }, 'reseau : option-string virt-xml impossible');
   bad({ vcpus: 2, xml: '<x/>' });
   assert.equal(vmEditSchema.safeParse({ vm_name: 'vm', secure_boot: true, firmware: 'uefi' }).success, true);
   assert.equal(vmEditSchema.safeParse({ vm_name: 'vm', tpm: 'true', description: '' }).success, true);
+  assert.equal(vmEditSchema.safeParse({ vm_name: 'vm', description: 'web, prod = oui -- a garder' }).success, true, 'virgule, = et tirets ailleurs sont permis (un seul argv pour virsh)');
 });
 
-test('refus VM en marche pour un champ NEEDS_STOP : aucune commande hormis la lecture d etat', async () => {
-  for (const field of [{ vcpus: 4 }, { memory_mib: 2048 }, { cpu_model: 'host-model' }, { firmware: 'uefi' }, { tpm: true }, { disk_grow_gb: 5 }]) {
-    const sys = system('running');
-    const r = await call({ vm_name: 'vm', autostart: true, ...field });
-    assert.equal(r.isError, true, JSON.stringify(field));
-    assert.equal(parse(r).code, 'VALIDATION_ERROR');
-    assert.equal(parse(r).state, 'running');
-    assert.match(parse(r).error, /exige.*une VM arretee/);
-    assert.match(parse(r).error, new RegExp(Object.keys(field)[0]));
-    assert.deepEqual(sys.calls.map((c) => c.args[2]), ['domstate'], 'autostart n est pas applique non plus');
+test('refus VM non arretee (running, paused, crashed) pour un champ NEEDS_STOP : aucune commande hormis la lecture d etat', async () => {
+  for (const state of ['running', 'paused', 'crashed']) {
+    for (const field of [{ vcpus: 4 }, { memory_mib: 2048 }, { cpu_model: 'host-model' }, { firmware: 'uefi' }, { tpm: true }, { disk_grow_gb: 5 }]) {
+      const sys = system(state);
+      const r = await call({ vm_name: 'vm', autostart: true, ...field });
+      assert.equal(r.isError, true, `${state} ${JSON.stringify(field)}`);
+      assert.equal(parse(r).code, 'VALIDATION_ERROR');
+      assert.equal(parse(r).state, state);
+      assert.match(parse(r).error, /exige.*une VM arretee/);
+      assert.match(parse(r).error, new RegExp(Object.keys(field)[0]));
+      assert.deepEqual(sys.calls.map((c) => c.args[2]), ['domstate'], 'autostart n est pas applique non plus');
+    }
   }
+});
+
+test('planification sur le XML INACTIF : un hostdev branche a chaud ne decale pas le rang, les skipped lisent la config persistante', async () => {
+  // live : dead:beef branche a chaud en PREMIER hostdev (non persistant) ; inactif : PCI puis 046d:c52b (rang 2)
+  const hot = '<hostdev mode="subsystem" type="usb" managed="yes"><source><vendor id="0xdead"/><product id="0xbeef"/></source></hostdev>';
+  const live = UEFI.replace('<hostdev mode="subsystem" type="pci"', `${hot}<hostdev mode="subsystem" type="pci"`);
+  const sys = installFakeSystem({ domains: { vm: 'running' }, xml: { vm: live }, xmlInactive: { vm: UEFI } });
+  const r = parse(await call({ vm_name: 'vm', usb_detach: '046d:c52b', usb_attach: 'dead:beef' }));
+  assert.deepEqual(sys.virshCalls('dumpxml').map((c) => c.args.slice(2)), [['dumpxml', '--inactive', 'vm']]);
+  assert.deepEqual(sys.writes(), [
+    'virt-xml vm --remove-device --hostdev 2 --update',
+    'virt-xml vm --add-device --hostdev type=usb,source.startupPolicy=optional,xpath1.set=./source/vendor/@id,xpath1.value=0xdead,xpath2.set=./source/product/@id,xpath2.value=0xbeef --update'
+  ], 'd apres le live : rang 3 (mauvais peripherique) et dead:beef « deja attache »');
+  assert.deepEqual(r.skipped, []);
 });
 
 test('vcpus + memoire sur VM arretee : sequence setvcpus --maximum, setvcpus, setmaxmem, setmem (--config, KiB)', async () => {
@@ -209,6 +229,7 @@ test('disk_grow_gb : par libvirt (vol-pool, domblkinfo, vol-resize capacite + N 
   assert.equal(parse(bad).code, 'VALIDATION_ERROR');
   assert.match(parse(bad).error, /volume d'aucun pool libvirt/);
   assert.deepEqual(sys.writes(), [], 'refus AVANT toute modification, autostart compris');
+  assert.deepEqual(sys.calls.map((c) => c.args[2]), ['domstate', 'dumpxml', 'domblklist', 'vol-pool'], 'lectures seulement, rien apres vol-pool');
 
   // capacite illisible : refus aussi
   sys = system('shut off', { volPools: { [DISK.source]: 'default' } });
@@ -222,19 +243,19 @@ test('disk_grow_gb : par libvirt (vol-pool, domblkinfo, vol-resize capacite + N 
   assert.match(parse(bad).error, /aucun disque/);
 });
 
-test('erreur a mi-chemin : arret immediat, applied partiel, champ en echec nomme', async () => {
-  const sys = system('shut off', { fail: { setmaxmem: { stderr: 'error: cannot set memory' } } });
+test('erreur a mi-chemin : arret immediat, applied partiel, champ en echec nomme, les DEUX ordres essayes sont rapportes', async () => {
+  const sys = system('shut off', { fail: { setmaxmem: { stderr: 'error: cannot set max memory' }, setmem: { stderr: 'error: cannot set current memory' } } });
   const r = await call({ vm_name: 'vm', vcpus: 2, memory_mib: 8192, autostart: true });
   assert.equal(r.isError, true);
   const p = parse(r);
   assert.equal(p.code, 'SCRIPT_ERROR');
-  assert.match(p.error, /memoire=8192MiB : error: cannot set memory/);
+  assert.match(p.error, /^memoire=8192MiB : tentative 1 : error: cannot set max memory ; tentative 2 : error: cannot set current memory$/);
   assert.deepEqual(p.applied, ['vcpus']);
   assert.deepEqual(p.changes, ['vcpus=2']);
   assert.deepEqual(p.failed, ['memory_mib']);
   assert.ok(!sys.writes().some((w) => w.startsWith('virsh autostart')), 'les champs suivants ne sont pas appliques');
-  // les deux ordres de setmaxmem/setmem ont ete essayes
-  assert.equal(sys.writes().filter((w) => w.startsWith('virsh setmaxmem')).length, 2);
+  // les deux ordres ont ete essayes, chacun arrete a sa premiere commande en echec
+  assert.deepEqual(sys.writes().filter((w) => /^virsh set(max)?mem/.test(w)), ['virsh setmaxmem vm 8388608 --config', 'virsh setmem vm 8388608 --config']);
 });
 
 test('autostart et description : virsh autostart [--disable], virsh desc --config --new-desc (chaine vide = effacer)', async () => {

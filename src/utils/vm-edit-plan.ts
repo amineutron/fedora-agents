@@ -26,8 +26,6 @@ export interface EditStep {
   attempts: Command[][];
   /** raison pour laquelle rien n'est lance (etat deja conforme) */
   skipped?: string;
-  /** applique aussi a la VM en marche (`--update`) */
-  hot: boolean;
 }
 
 export type PlanResult =
@@ -64,20 +62,20 @@ function vcpusStep(vm: string, vcpus: number): EditStep {
   const n = String(vcpus);
   const max = virshCmd('setvcpus', vm, n, '--maximum', '--config');
   const cur = virshCmd('setvcpus', vm, n, '--config');
-  return { fields: ['vcpus'], label: `vcpus=${vcpus}`, attempts: [[max, cur], [cur, max]], hot: false };
+  return { fields: ['vcpus'], label: `vcpus=${vcpus}`, attempts: [[max, cur], [cur, max]] };
 }
 
 function memoryStep(vm: string, mib: number): EditStep {
   const kib = String(mib * 1024);
   const max = virshCmd('setmaxmem', vm, kib, '--config');
   const cur = virshCmd('setmem', vm, kib, '--config');
-  return { fields: ['memory_mib'], label: `memoire=${mib}MiB`, attempts: [[max, cur], [cur, max]], hot: false };
+  return { fields: ['memory_mib'], label: `memoire=${mib}MiB`, attempts: [[max, cur], [cur, max]] };
 }
 
 /** Firmware et secure boot ensemble : le secure boot exige l'UEFI (schema). */
 function firmwareStep(vm: string, firmware: 'bios' | 'uefi', secure: boolean | undefined, hw: VmHardware): EditStep {
   if (firmware === 'bios') {
-    if (hw.firmware === 'bios') return { fields: ['firmware'], label: 'firmware=bios', attempts: [], skipped: 'firmware deja bios', hot: false };
+    if (hw.firmware === 'bios') return { fields: ['firmware'], label: 'firmware=bios', attempts: [], skipped: 'firmware deja bios' };
     // Fedora ne livre AUCUN descripteur SeaBIOS dans /usr/share/qemu/firmware (edk2-ovmf seulement) :
     // `<os firmware='bios'>` (selection automatique) echoue toujours ("Unable to find 'bios' firmware").
     // Il faut RETIRER l'attribut (`<os>` nu = SeaBIOS par defaut) : `./os/@firmware=` (valeur vide) ;
@@ -90,25 +88,25 @@ function firmwareStep(vm: string, firmware: 'bios' | 'uefi', secure: boolean | u
       '--xml', 'xpath.delete=./os/nvram',
       '--xml', 'xpath.delete=./os/firmware',
       '--xml', 'xpath.delete=./features/smm');
-    return { fields: ['firmware'], label: 'firmware=bios', attempts: [[cmd]], hot: false };
+    return { fields: ['firmware'], label: 'firmware=bios', attempts: [[cmd]] };
   }
   if (secure === undefined) {
-    if (hw.firmware === 'uefi') return { fields: ['firmware'], label: 'firmware=uefi', attempts: [], skipped: 'firmware deja uefi', hot: false };
-    return { fields: ['firmware'], label: 'firmware=uefi', attempts: [[virtXml(vm, false, '--edit', '--boot', 'uefi')]], hot: false };
+    if (hw.firmware === 'uefi') return { fields: ['firmware'], label: 'firmware=uefi', attempts: [], skipped: 'firmware deja uefi' };
+    return { fields: ['firmware'], label: 'firmware=uefi', attempts: [[virtXml(vm, false, '--edit', '--boot', 'uefi')]] };
   }
   // 1) ancien choix de firmware efface (un chemin OVMF explicite empecherait la selection automatique)
   // 2) UEFI + secure boot demande a la fois par <loader secure> et par <firmware><feature>
   const reset = virtXml(vm, false, '--edit', '--boot', 'xpath1.delete=./firmware,xpath2.delete=./loader,xpath3.delete=./nvram');
   const set = virtXml(vm, false, '--edit', '--boot',
     `uefi,loader.secure=${yesNo(secure)},firmware.feature0.name=secure-boot,firmware.feature0.enabled=${yesNo(secure)}`);
-  return { fields: ['firmware', 'secure_boot'], label: `firmware=uefi, secure boot=${ouiNon(secure)}`, attempts: [[reset, set]], hot: false };
+  return { fields: ['firmware', 'secure_boot'], label: `firmware=uefi, secure boot=${ouiNon(secure)}`, attempts: [[reset, set]] };
 }
 
 function tpmStep(vm: string, wanted: boolean, hw: VmHardware): EditStep {
   const label = `tpm=${ouiNon(wanted)}`;
-  if (wanted === hw.tpm) return { fields: ['tpm'], label, attempts: [], skipped: wanted ? 'TPM deja present' : 'aucun TPM a retirer', hot: false };
+  if (wanted === hw.tpm) return { fields: ['tpm'], label, attempts: [], skipped: wanted ? 'TPM deja present' : 'aucun TPM a retirer' };
   const cmd = wanted ? virtXml(vm, false, '--add-device', '--tpm', 'default') : virtXml(vm, false, '--remove-device', '--tpm', 'all');
-  return { fields: ['tpm'], label, attempts: [[cmd]], hot: false };
+  return { fields: ['tpm'], label, attempts: [[cmd]] };
 }
 
 /** libvirt refuse de melanger <os><boot dev> et <boot order> par peripherique : on efface d'abord ces derniers. */
@@ -120,30 +118,30 @@ function bootOrderStep(vm: string, order: readonly string[], hw: VmHardware): Ed
     ]
     : [];
   const set = virtXml(vm, false, '--edit', '--boot', order.join(','));
-  return { fields: ['boot_order'], label: `ordre de demarrage=${order.join(',')}`, attempts: [[...clear, set]], hot: false };
+  return { fields: ['boot_order'], label: `ordre de demarrage=${order.join(',')}`, attempts: [[...clear, set]] };
 }
 
 function displayStep(vm: string, display: 'spice' | 'vnc', hw: VmHardware): EditStep {
   const label = `affichage=${display}`;
-  if (hw.display === display) return { fields: ['display'], label, attempts: [], skipped: `affichage deja ${display}`, hot: false };
+  if (hw.display === display) return { fields: ['display'], label, attempts: [], skipped: `affichage deja ${display}` };
   const cmd = hw.display === 'none'
     ? virtXml(vm, false, '--add-device', '--graphics', `${display},listen=127.0.0.1`)
     : virtXml(vm, false, '--edit', '--graphics', display);
-  return { fields: ['display'], label, attempts: [[cmd]], hot: false };
+  return { fields: ['display'], label, attempts: [[cmd]] };
 }
 
 function networkStep(vm: string, network: string, hw: VmHardware, update: boolean): EditStep {
   const label = `reseau=${network}`;
-  if (hw.network === network) return { fields: ['network'], label, attempts: [], skipped: `reseau deja ${network}`, hot: true };
+  if (hw.network === network) return { fields: ['network'], label, attempts: [], skipped: `reseau deja ${network}` };
   const action = hw.network === null ? '--add-device' : '--edit';
-  return { fields: ['network'], label, attempts: [[virtXml(vm, update, action, '--network', `network=${network}`)]], hot: true };
+  return { fields: ['network'], label, attempts: [[virtXml(vm, update, action, '--network', `network=${network}`)]] };
 }
 
 function usbDetachStep(vm: string, id: string, xml: string, update: boolean): EditStep {
   const index = usbHostdevIndex(xml, id);
   const label = `usb detache=${id.toLowerCase()}`;
-  if (index === null) return { fields: ['usb_detach'], label, attempts: [], skipped: `peripherique ${id.toLowerCase()} non attache`, hot: true };
-  return { fields: ['usb_detach'], label, attempts: [[virtXml(vm, update, '--remove-device', '--hostdev', String(index))]], hot: true };
+  if (index === null) return { fields: ['usb_detach'], label, attempts: [], skipped: `peripherique ${id.toLowerCase()} non attache` };
+  return { fields: ['usb_detach'], label, attempts: [[virtXml(vm, update, '--remove-device', '--hostdev', String(index))]] };
 }
 
 /**
@@ -154,10 +152,10 @@ function usbDetachStep(vm: string, id: string, xml: string, update: boolean): Ed
 function usbAttachStep(vm: string, id: string, hw: VmHardware, update: boolean): EditStep {
   const low = id.toLowerCase();
   const label = `usb attache=${low} (optionnel au demarrage)`;
-  if (hw.usb.includes(low)) return { fields: ['usb_attach'], label, attempts: [], skipped: `peripherique ${low} deja attache`, hot: true };
+  if (hw.usb.includes(low)) return { fields: ['usb_attach'], label, attempts: [], skipped: `peripherique ${low} deja attache` };
   const [vendor, product] = low.split(':');
   const spec = `type=usb,source.startupPolicy=optional,xpath1.set=./source/vendor/@id,xpath1.value=0x${vendor},xpath2.set=./source/product/@id,xpath2.value=0x${product}`;
-  return { fields: ['usb_attach'], label, attempts: [[virtXml(vm, update, '--add-device', '--hostdev', spec)]], hot: true };
+  return { fields: ['usb_attach'], label, attempts: [[virtXml(vm, update, '--add-device', '--hostdev', spec)]] };
 }
 
 /**
@@ -168,7 +166,7 @@ function diskGrowStep(gb: number, g: GrowTarget): EditStep {
   const target = String(g.capacityBytes + gb * GIB);
   const resize = virshCmd('vol-resize', g.disk.source, target, '--pool', g.pool);
   const refresh = virshCmd('pool-refresh', g.pool);
-  return { fields: ['disk_grow_gb'], label: `disque ${g.disk.target} +${gb}G`, attempts: [[resize, refresh]], hot: false };
+  return { fields: ['disk_grow_gb'], label: `disque ${g.disk.target} +${gb}G`, attempts: [[resize, refresh]] };
 }
 
 /** Premier disque de type fichier de `virsh domblklist --details` ; message d'erreur si absent. */
@@ -198,7 +196,7 @@ export function planEdit(input: PlanInput, xml: string): PlanResult {
   if (p.vcpus !== undefined) steps.push(vcpusStep(vm, p.vcpus));
   if (p.memory_mib !== undefined) steps.push(memoryStep(vm, p.memory_mib));
   if (p.cpu_model !== undefined) {
-    steps.push({ fields: ['cpu_model'], label: `modele cpu=${p.cpu_model}`, attempts: [[virtXml(vm, false, '--edit', '--cpu', p.cpu_model)]], hot: false });
+    steps.push({ fields: ['cpu_model'], label: `modele cpu=${p.cpu_model}`, attempts: [[virtXml(vm, false, '--edit', '--cpu', p.cpu_model)]] });
   }
   if (p.firmware !== undefined) steps.push(firmwareStep(vm, p.firmware, p.secure_boot, hw));
   if (p.tpm !== undefined) steps.push(tpmStep(vm, p.tpm, hw));
@@ -210,10 +208,10 @@ export function planEdit(input: PlanInput, xml: string): PlanResult {
   if (p.disk_grow_gb !== undefined && grow !== null) steps.push(diskGrowStep(p.disk_grow_gb, grow));
   if (p.autostart !== undefined) {
     const cmd = p.autostart ? virshCmd('autostart', vm) : virshCmd('autostart', '--disable', vm);
-    steps.push({ fields: ['autostart'], label: `autostart=${p.autostart}`, attempts: [[cmd]], hot: true });
+    steps.push({ fields: ['autostart'], label: `autostart=${p.autostart}`, attempts: [[cmd]] });
   }
   if (p.description !== undefined) {
-    steps.push({ fields: ['description'], label: p.description === '' ? 'description effacee' : 'description', attempts: [[virshCmd('desc', vm, '--config', '--new-desc', p.description)]], hot: true });
+    steps.push({ fields: ['description'], label: p.description === '' ? 'description effacee' : 'description', attempts: [[virshCmd('desc', vm, '--config', '--new-desc', p.description)]] });
   }
   return { ok: true, steps };
 }

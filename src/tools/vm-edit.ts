@@ -43,14 +43,16 @@ async function runSequence(commands: readonly Command[]): Promise<string | null>
   return null;
 }
 
-/** Premiere tentative entierement reussie ; sinon la derniere erreur. */
+/** Premiere tentative entierement reussie ; sinon TOUTES les erreurs, une par tentative. */
 async function runStep(step: EditStep): Promise<string | null> {
-  let last: string | null = null;
+  const errors: string[] = [];
   for (const attempt of step.attempts) {
-    last = await runSequence(attempt);
-    if (last === null) return null;
+    const error = await runSequence(attempt);
+    if (error === null) return null;
+    errors.push(error);
   }
-  return last;
+  if (errors.length <= 1) return errors[0] ?? 'aucune commande a lancer';
+  return errors.map((e, i) => `tentative ${i + 1} : ${e}`).join(' ; ');
 }
 
 async function applySteps(steps: readonly EditStep[]): Promise<Outcome> {
@@ -119,7 +121,10 @@ async function vmEditHandler(params: unknown): Promise<ToolResult> {
     return fail(ErrorCode.VALIDATION_ERROR, needsStopMessage(vm, p, state), { state });
   }
 
-  const dump = await virsh(TOOL, ['dumpxml', vm]);
+  // XML INACTIF (configuration persistante) : c'est lui que virt-xml edite et indexe. Le XML live d'une
+  // VM en marche peut porter un peripherique branche a chaud non persistant, qui decalerait le rang des
+  // hostdev (risque de retirer le mauvais) et fausserait les « deja attache / deja ce reseau ».
+  const dump = await virsh(TOOL, ['dumpxml', '--inactive', vm]);
   if (dump.code !== 0) return fail(ErrorCode.SCRIPT_ERROR, dump.stderr || `virsh dumpxml a echoue (code ${dump.code})`, { state });
   const hardware = parseHardwareXml(dump.stdout);
 

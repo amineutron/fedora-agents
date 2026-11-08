@@ -12,14 +12,12 @@ import type { ToolDefinition, ToolResult } from './vm-controller.js';
 const TOOL = 'vm_hardware';
 
 /** Capacite virtuelle de chaque disque (`virsh domblkinfo`) ; null si illisible. */
-async function withCapacities(vm: string, disks: readonly HardwareDisk[]): Promise<HardwareDisk[]> {
-  const out: HardwareDisk[] = [];
-  for (const d of disks) {
+function withCapacities(vm: string, disks: readonly HardwareDisk[]): Promise<HardwareDisk[]> {
+  return Promise.all(disks.map(async (d) => {
     const r = await virsh(TOOL, ['domblkinfo', vm, d.target]);
     const bytes = r.code === 0 ? parseCapacityBytes(r.stdout) : null;
-    out.push({ ...d, capacity_gb: bytes === null ? null : bytesToGb(bytes) });
-  }
-  return out;
+    return { ...d, capacity_gb: bytes === null ? null : bytesToGb(bytes) };
+  }));
 }
 
 async function vmHardwareHandler(params: unknown): Promise<ToolResult> {
