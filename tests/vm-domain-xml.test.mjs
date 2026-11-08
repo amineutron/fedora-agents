@@ -24,7 +24,9 @@ test('le domaine construit : q35, virtio, ecran en local, agent invite, journal 
   assert.match(out, /<listen type='address' address='127\.0\.0\.1'\/>/);
   assert.doesNotMatch(out, /0\.0\.0\.0/);
   assert.match(out, /org\.qemu\.guest_agent\.0/);
-  assert.match(out, /<log file='\/var\/log\/libvirt\/qemu\/lab-serial0\.log' append='off'\/>/);
+  // journal serie lu par vm_console_log : <log> DANS <serial type='pty'>, conserve entre deux demarrages, console associee
+  assert.match(out, /<serial type='pty'>[\s\S]*?<log file='\/var\/log\/libvirt\/qemu\/lab-serial0\.log' append='on'\/>[\s\S]*?<\/serial>/);
+  assert.match(out, /<console type='pty'>\s*<target type='serial' port='0'\/>\s*<\/console>/);
   assert.match(out, /<boot order='1'\/>/);
 });
 

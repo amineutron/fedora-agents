@@ -61,6 +61,8 @@ export const TIMEOUTS: Record<string, number> = {
   vm_image_fetch: 1800_000,       // 30 min (telechargement)
   vm_console: 30_000,
   vm_console_log: 30_000,
+  vm_hardware: 30_000,
+  vm_edit: 300_000,       // 5 min (virt-xml par champ, qemu-img resize)
 
   // Backup Manager
   backup_create: 600_000,  // 10 min
@@ -85,7 +87,7 @@ export interface ToolPermission {
 // Sert a deriver readOnlyHint des ToolAnnotations MCP exposees par list_tools.
 export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
   'help', 'vm_status', 'vm_verify', 'backup_status', 'backup_list', 'backup_verify',
-  'vm_console', 'vm_console_log'
+  'vm_console', 'vm_console_log', 'vm_hardware'
 ]);
 
 // Outils rejouables sans effet cumulatif (relancer ne change rien de plus).
@@ -94,7 +96,7 @@ export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
 export const IDEMPOTENT_TOOLS: ReadonlySet<string> = new Set([
   'help', 'vm_status', 'vm_verify', 'backup_status', 'backup_list', 'backup_verify',
   'vm_start', 'vm_stop', 'vm_destroy', 'vm_copy', 'backup_restore',
-  'vm_pause', 'vm_resume', 'vm_image_fetch', 'vm_console', 'vm_console_log'
+  'vm_pause', 'vm_resume', 'vm_image_fetch', 'vm_console', 'vm_console_log', 'vm_hardware'
 ]);
 
 export const TOOL_PERMISSIONS: Record<string, ToolPermission> = {
@@ -205,6 +207,16 @@ export const TOOL_PERMISSIONS: Record<string, ToolPermission> = {
     dangerous: false,
     description: 'Lit les dernières lignes du journal du port série d\'une VM'
   },
+  vm_hardware: {
+    requiresSudo: false,
+    dangerous: false,
+    description: 'Lit le matériel déclaré d\'une VM (cpu, firmware, TPM, démarrage, affichage, réseau, disques, USB)'
+  },
+  vm_edit: {
+    requiresSudo: false,
+    dangerous: false,  // écrit la configuration ; n'arrête, ne supprime ni ne réduit rien (disque : agrandissement seul)
+    description: 'Modifie une VM : vcpus, mémoire, cpu, firmware, TPM, secure boot, démarrage, USB, affichage, réseau, disque'
+  },
 
   // Backup Manager - lecture
   backup_status: {
@@ -251,7 +263,7 @@ export const RETRY_CONFIG = {
   backoffMs: [1000, 2000, 5000],
 
   // Opérations sans retry (modifications)
-  nonRetryable: ['vm_stop', 'vm_start', 'vm_snapshot', 'vm_reboot', 'vm_create_from_image', 'backup_restore', 'backup_clean', 'backup_create']
+  nonRetryable: ['vm_stop', 'vm_start', 'vm_snapshot', 'vm_reboot', 'vm_create_from_image', 'vm_edit', 'backup_restore', 'backup_clean', 'backup_create']
 } as const;
 
 // Codes d'erreur

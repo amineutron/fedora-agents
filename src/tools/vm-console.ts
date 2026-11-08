@@ -79,14 +79,25 @@ export function serialLogRoots(env: NodeJS.ProcessEnv = process.env): string[] {
   return ['/var/log/libvirt', '/var/lib/libvirt', imagesDir(env), ...extra];
 }
 
-/** Chemin reel du journal s'il est un fichier ordinaire sous une racine autorisee, sinon null. */
-async function confinedLog(path: string, roots: readonly string[]): Promise<string | null> {
-  if (!path.startsWith('/') || path.includes('..')) return null;
+/**
+ * `absent` : le fichier n'existe pas (VM definie sans journal, ou jamais demarree) ;
+ * `droits` : il existe peut-etre mais cet utilisateur ne peut ni le parcourir ni le lire ;
+ * `hors_racines` : chemin relatif, `..`, ou cible hors des dossiers autorises.
+ */
+export type LogIssue = 'absent' | 'droits' | 'hors_racines';
+type Confined = { real: string } | { issue: LogIssue };
+
+const errnoOf = (error: unknown): string => (error as { code?: string } | null)?.code ?? '';
+const issueOf = (error: unknown): LogIssue => (/^(EACCES|EPERM)$/.test(errnoOf(error)) ? 'droits' : 'absent');
+
+/** Chemin reel du journal s'il est un fichier ordinaire sous une racine autorisee. */
+async function confinedLog(path: string, roots: readonly string[]): Promise<Confined> {
+  if (!path.startsWith('/') || path.includes('..')) return { issue: 'hors_racines' };
   let real: string;
   try {
     real = await realpath(path);
-  } catch {
-    return null;
+  } catch (error) {
+    return { issue: issueOf(error) };
   }
   for (const root of roots) {
     let realRoot: string;
@@ -95,10 +106,16 @@ async function confinedLog(path: string, roots: readonly string[]): Promise<stri
     } catch {
       continue;
     }
-    if (real.startsWith(realRoot + sep)) return real;
+    if (real.startsWith(realRoot + sep)) return { real };
   }
-  return null;
+  return { issue: 'hors_racines' };
 }
+
+const ISSUE_TEXT: Record<LogIssue, string> = {
+  absent: 'le fichier n\'existe pas : VM definie sans journal serie (<log file>), ou jamais demarree depuis sa definition',
+  droits: 'droits insuffisants pour cet utilisateur : /var/log/libvirt est reserve a root par defaut, l\'administrateur doit autoriser la lecture (setfacl, voir README)',
+  hors_racines: 'chemin hors des dossiers autorises'
+};
 
 const ANSI_SEQUENCE = new RegExp(`${String.fromCharCode(27)}\\[[0-9;?]*[ -/]*[@-~]`, 'g');
 
@@ -148,26 +165,27 @@ async function vmConsoleLogHandler(params: unknown): Promise<ToolResult> {
   }
 
   const roots = serialLogRoots();
-  let unreadable: string | null = null;
+  let last: { path: string; issue: LogIssue } | null = null;
   for (const candidate of declared) {
-    const real = await confinedLog(candidate.path, roots);
-    if (real === null) {
-      unreadable = candidate.path;
+    const confined = await confinedLog(candidate.path, roots);
+    if ('issue' in confined) {
+      last = { path: candidate.path, issue: confined.issue };
       continue;
     }
     try {
-      const { text, truncated } = await readTail(real);
+      const { text, truncated } = await readTail(confined.real);
       const out = tailLines(text, lines);
       return ok({ vm, state: lookup.state, source: candidate.path, kind: candidate.kind, lines: out, count: out.length, truncated });
     } catch (error) {
-      unreadable = candidate.path;
-      if (!(error instanceof Error) || !/EACCES|EPERM|ENOENT/.test(error.message)) throw error;
+      if (!/^(EACCES|EPERM|ENOENT)$/.test(errnoOf(error))) throw error;
+      last = { path: candidate.path, issue: issueOf(error) };
     }
   }
+  const issue = last?.issue ?? 'absent';
   return fail(
-    ErrorCode.PERMISSION_DENIED,
-    `Journal serie de '${vm}' illisible (${unreadable}) : fichier absent, hors des dossiers autorises, ou droits insuffisants pour cet utilisateur`,
-    { path: unreadable, allowed_roots: roots }
+    issue === 'absent' ? ErrorCode.VALIDATION_ERROR : ErrorCode.PERMISSION_DENIED,
+    `Journal serie de '${vm}' illisible (${last?.path}) : ${ISSUE_TEXT[issue]}`,
+    { path: last?.path ?? null, reason: issue, allowed_roots: roots }
   );
 }
 

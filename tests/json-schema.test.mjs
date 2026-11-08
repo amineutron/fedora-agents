@@ -40,4 +40,11 @@ test('les outils hub exposent leurs parametres, requis et enums', () => {
   assert.deepEqual(byName.vm_image_fetch.required, ['image_id']);
   assert.deepEqual(byName.vm_console.properties.type.enum, ['spice', 'vnc', 'auto']);
   assert.ok('lines' in byName.vm_console_log.properties);
+  assert.deepEqual(byName.vm_hardware.required, ['vm_name']);
+  assert.deepEqual(byName.vm_edit.required, ['vm_name'], 'tous les champs de vm_edit sont facultatifs (au moins un, verifie par le schema)');
+  for (const field of ['vcpus', 'memory_mib', 'autostart', 'description', 'cpu_model', 'firmware', 'tpm', 'secure_boot', 'boot_order', 'usb_attach', 'usb_detach', 'display', 'network', 'disk_grow_gb']) {
+    assert.ok(field in byName.vm_edit.properties, field);
+  }
+  assert.deepEqual(byName.vm_edit.properties.cpu_model.enum, ['host-passthrough', 'host-model', 'x86-64-v2', 'qemu64']);
+  assert.deepEqual(byName.vm_edit.properties.firmware.enum, ['bios', 'uefi']);
 });
