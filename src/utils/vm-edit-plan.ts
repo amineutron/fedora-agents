@@ -1,6 +1,6 @@
 /**
  * Plan d'edition d'une VM : traduit les parametres de vm_edit en une suite ordonnee d'etapes
- * (commandes virsh, virt-xml, qemu-img), sans rien executer. Fonction pure, testee.
+ * (commandes virsh et virt-xml), sans rien executer. Fonction pure, testee.
  *
  * Chaque etape porte une ou plusieurs tentatives : la premiere tentative dont TOUTES les commandes
  * reussissent suffit (libvirt refuse `setvcpus --maximum` avant ou apres `setvcpus` selon que l'on
@@ -34,16 +34,22 @@ export type PlanResult =
   | { ok: true; steps: EditStep[] }
   | { ok: false; message: string; extra: Record<string, unknown> };
 
+/** Disque a agrandir, resolu par l'outil : volume d'un pool libvirt et capacite actuelle (`domblkinfo`). */
+export interface GrowTarget {
+  disk: BlockDevice;
+  pool: string;
+  capacityBytes: number;
+}
+
 export interface PlanInput {
   params: VmEditParams;
   state: DomainState;
   hardware: VmHardware;
-  /** disques de `virsh domblklist --details` (null si non lus) */
-  blocks: BlockDevice[] | null;
+  /** present seulement quand `disk_grow_gb` est demande */
+  grow: GrowTarget | null;
 }
 
-/** Seul prefixe ou un disque peut etre agrandi. */
-export const DISK_GROW_ROOT = '/var/lib/libvirt/';
+export const GIB = 1024 ** 3;
 
 const virshCmd = (...args: string[]): Command => ({ command: 'virsh', args: ['-c', LIBVIRT_URI, ...args] });
 const virtXml = (vm: string, update: boolean, ...args: string[]): Command => ({
@@ -71,9 +77,12 @@ function memoryStep(vm: string, mib: number): EditStep {
 /** Firmware et secure boot ensemble : le secure boot exige l'UEFI (schema). */
 function firmwareStep(vm: string, firmware: 'bios' | 'uefi', secure: boolean | undefined): EditStep {
   if (firmware === 'bios') {
-    // <loader>, <nvram> et <firmware> sont retires : libvirt choisit SeaBIOS
-    const cmd = virtXml(vm, false, '--edit', '--boot', 'firmware=bios,xpath1.delete=./loader,xpath2.delete=./nvram,xpath3.delete=./firmware');
-    return { fields: ['firmware'], label: 'firmware=bios', attempts: [[cmd]], hot: false };
+    // <loader>, <nvram> et <firmware> sont retires : libvirt choisit SeaBIOS. Le <smm state='on'/> que
+    // libvirt ajoute pour le secure boot est retire aussi (SeaBIOS n'y est pas compatible : "Unable to
+    // find 'bios' firmware"). Une seule operation par appel virt-xml : deux commandes. Le fichier NVRAM reste.
+    const boot = virtXml(vm, false, '--edit', '--boot', 'firmware=bios,xpath1.delete=./loader,xpath2.delete=./nvram,xpath3.delete=./firmware');
+    const smm = virtXml(vm, false, '--edit', '--features', 'xpath1.delete=./smm');
+    return { fields: ['firmware'], label: 'firmware=bios', attempts: [[boot, smm]], hot: false };
   }
   if (secure === undefined) {
     return { fields: ['firmware'], label: 'firmware=uefi', attempts: [[virtXml(vm, false, '--edit', '--boot', 'uefi')]], hot: false };
@@ -128,28 +137,35 @@ function usbDetachStep(vm: string, id: string, xml: string, update: boolean): Ed
   return { fields: ['usb_detach'], label, attempts: [[virtXml(vm, update, '--remove-device', '--hostdev', String(index))]], hot: true };
 }
 
-/** Par xpath : pas de recherche du peripherique sur l'hote, il peut etre branche plus tard. */
+/**
+ * Par xpath : pas de recherche du peripherique sur l'hote, il peut etre branche plus tard.
+ * `startupPolicy=optional` : la VM demarre meme si le peripherique est absent (sinon le demarrage echoue
+ * tant qu'il n'est pas detache).
+ */
 function usbAttachStep(vm: string, id: string, hw: VmHardware, update: boolean): EditStep {
   const low = id.toLowerCase();
-  const label = `usb attache=${low}`;
+  const label = `usb attache=${low} (optionnel au demarrage)`;
   if (hw.usb.includes(low)) return { fields: ['usb_attach'], label, attempts: [], skipped: `peripherique ${low} deja attache`, hot: true };
   const [vendor, product] = low.split(':');
-  const spec = `type=usb,xpath1.set=./source/vendor/@id,xpath1.value=0x${vendor},xpath2.set=./source/product/@id,xpath2.value=0x${product}`;
+  const spec = `type=usb,source.startupPolicy=optional,xpath1.set=./source/vendor/@id,xpath1.value=0x${vendor},xpath2.set=./source/product/@id,xpath2.value=0x${product}`;
   return { fields: ['usb_attach'], label, attempts: [[virtXml(vm, update, '--add-device', '--hostdev', spec)]], hot: true };
 }
 
-function diskGrowStep(gb: number, disk: BlockDevice): EditStep {
-  const cmd: Command = { command: 'qemu-img', args: ['resize', disk.source, `+${gb}G`] };
-  return { fields: ['disk_grow_gb'], label: `disque ${disk.target} +${gb}G`, attempts: [[cmd]], hot: false };
+/**
+ * Par libvirt (le volume appartient a libvirt, l'utilisateur n'a que le groupe : `qemu-img resize`
+ * direct est refuse) : `vol-resize` a la capacite actuelle + N Gio, puis `pool-refresh`.
+ */
+function diskGrowStep(gb: number, g: GrowTarget): EditStep {
+  const target = String(g.capacityBytes + gb * GIB);
+  const resize = virshCmd('vol-resize', g.disk.source, target, '--pool', g.pool);
+  const refresh = virshCmd('pool-refresh', g.pool);
+  return { fields: ['disk_grow_gb'], label: `disque ${g.disk.target} +${gb}G`, attempts: [[resize, refresh]], hot: false };
 }
 
-/** Premier disque de type fichier ; message d'erreur si absent ou hors du dossier libvirt. */
+/** Premier disque de type fichier de `virsh domblklist --details` ; message d'erreur si absent. */
 export function growableDisk(blocks: BlockDevice[] | null): { ok: true; disk: BlockDevice } | { ok: false; message: string } {
   const disk = (blocks ?? []).find((b) => b.type === 'file' && b.device === 'disk' && b.source !== '-');
   if (!disk) return { ok: false, message: 'disk_grow_gb : aucun disque de type fichier sur cette VM' };
-  if (!disk.source.startsWith(DISK_GROW_ROOT) || disk.source.includes('..')) {
-    return { ok: false, message: `disk_grow_gb : le disque ${disk.target} (${disk.source}) n'est pas sous ${DISK_GROW_ROOT} : agrandissement refuse` };
-  }
   return { ok: true, disk };
 }
 
@@ -161,15 +177,12 @@ export function needsStopMessage(vm: string, params: VmEditParams, state: Domain
 
 /** Ordre fixe d'application. Rien n'est lance ici. */
 export function planEdit(input: PlanInput, xml: string): PlanResult {
-  const { params: p, state, hardware: hw } = input;
+  const { params: p, state, hardware: hw, grow } = input;
   const vm = p.vm_name;
   const update = state === 'running';
 
-  let disk: BlockDevice | null = null;
-  if (p.disk_grow_gb !== undefined) {
-    const g = growableDisk(input.blocks);
-    if (!g.ok) return { ok: false, message: g.message, extra: { disks: input.blocks ?? [] } };
-    disk = g.disk;
+  if (p.disk_grow_gb !== undefined && grow === null) {
+    return { ok: false, message: 'disk_grow_gb : aucun disque de type fichier sur cette VM', extra: {} };
   }
 
   const steps: EditStep[] = [];
@@ -185,7 +198,7 @@ export function planEdit(input: PlanInput, xml: string): PlanResult {
   if (p.network !== undefined) steps.push(networkStep(vm, p.network, hw, update));
   if (p.usb_detach !== undefined) steps.push(usbDetachStep(vm, p.usb_detach, xml, update));
   if (p.usb_attach !== undefined) steps.push(usbAttachStep(vm, p.usb_attach, hw, update));
-  if (p.disk_grow_gb !== undefined && disk !== null) steps.push(diskGrowStep(p.disk_grow_gb, disk));
+  if (p.disk_grow_gb !== undefined && grow !== null) steps.push(diskGrowStep(p.disk_grow_gb, grow));
   if (p.autostart !== undefined) {
     const cmd = p.autostart ? virshCmd('autostart', vm) : virshCmd('autostart', '--disable', vm);
     steps.push({ fields: ['autostart'], label: `autostart=${p.autostart}`, attempts: [[cmd]], hot: true });

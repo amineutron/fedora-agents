@@ -1,6 +1,6 @@
 /**
  * Outil MCP : vm_edit. Modifie le materiel et les reglages d'une VM (liste FERMEE de champs) par
- * virsh, virt-xml et qemu-img, sans script bash ni XML libre.
+ * virsh et virt-xml, sans script bash ni XML libre.
  *
  * Tout est valide avant de toucher a libvirt ; les champs sont ensuite appliques dans un ordre fixe
  * et, a la premiere erreur, l'outil s'arrete en rendant ce qui a deja ete applique.
@@ -9,8 +9,8 @@
 import { ErrorCode } from '../config.js';
 import { run } from '../utils/runner.js';
 import { fail, getDomainState, ok, virsh } from '../utils/virsh.js';
-import { hotFields, needsRestart, needsStopMessage, planEdit, type Command, type EditStep } from '../utils/vm-edit-plan.js';
-import { parseBlkList, parseHardwareXml } from '../utils/vm-hardware-xml.js';
+import { growableDisk, hotFields, needsRestart, needsStopMessage, planEdit, type Command, type EditStep, type GrowTarget } from '../utils/vm-edit-plan.js';
+import { parseBlkList, parseCapacityBytes, parseHardwareXml } from '../utils/vm-hardware-xml.js';
 import {
   VM_EDIT_HOT,
   VM_EDIT_LIMITS,
@@ -68,6 +68,40 @@ async function applySteps(steps: readonly EditStep[]): Promise<Outcome> {
   return out;
 }
 
+type GrowLookup =
+  | { ok: true; target: GrowTarget }
+  | { ok: false; code: ErrorCode; message: string; extra: Record<string, unknown> };
+
+/**
+ * Premier disque fichier de la VM, son pool libvirt (`vol-pool` : un chemin qui n'est le volume
+ * d'aucun pool est refuse) et sa capacite actuelle (`domblkinfo`). Lectures seules.
+ */
+async function resolveGrowTarget(vm: string): Promise<GrowLookup> {
+  const list = await virsh(TOOL, ['domblklist', vm, '--details']);
+  if (list.code !== 0) return { ok: false, code: ErrorCode.SCRIPT_ERROR, message: list.stderr || `virsh domblklist a echoue (code ${list.code})`, extra: {} };
+  const blocks = parseBlkList(list.stdout);
+  const found = growableDisk(blocks);
+  if (!found.ok) return { ok: false, code: ErrorCode.VALIDATION_ERROR, message: found.message, extra: { disks: blocks } };
+  const disk = found.disk;
+
+  const pool = await virsh(TOOL, ['vol-pool', disk.source]);
+  const poolName = pool.stdout.trim();
+  if (pool.code !== 0 || poolName === '') {
+    return {
+      ok: false, code: ErrorCode.VALIDATION_ERROR,
+      message: `disk_grow_gb : le disque ${disk.target} (${disk.source}) n'est le volume d'aucun pool libvirt : agrandissement refuse (seuls les volumes geres par libvirt sont agrandis, par vol-resize)`,
+      extra: { disk: disk.source }
+    };
+  }
+
+  const info = await virsh(TOOL, ['domblkinfo', vm, disk.target]);
+  const capacityBytes = info.code === 0 ? parseCapacityBytes(info.stdout) : null;
+  if (capacityBytes === null) {
+    return { ok: false, code: ErrorCode.SCRIPT_ERROR, message: `disk_grow_gb : capacite actuelle du disque ${disk.target} illisible (${info.stderr.trim() || 'virsh domblkinfo'})`, extra: { disk: disk.source } };
+  }
+  return { ok: true, target: { disk, pool: poolName, capacityBytes } };
+}
+
 function summary(vm: string, outcome: Outcome, restart: boolean): string {
   const done = outcome.changes.length > 0 ? `VM '${vm}' modifiee : ${outcome.changes.join(', ')}` : `VM '${vm}' : rien a modifier`;
   const skipped = outcome.skipped.length > 0 ? ` (sans effet : ${outcome.skipped.join(', ')})` : '';
@@ -89,14 +123,14 @@ async function vmEditHandler(params: unknown): Promise<ToolResult> {
   if (dump.code !== 0) return fail(ErrorCode.SCRIPT_ERROR, dump.stderr || `virsh dumpxml a echoue (code ${dump.code})`, { state });
   const hardware = parseHardwareXml(dump.stdout);
 
-  let blocks = null;
+  let grow: GrowTarget | null = null;
   if (p.disk_grow_gb !== undefined) {
-    const list = await virsh(TOOL, ['domblklist', vm, '--details']);
-    if (list.code !== 0) return fail(ErrorCode.SCRIPT_ERROR, list.stderr || `virsh domblklist a echoue (code ${list.code})`, { state });
-    blocks = parseBlkList(list.stdout);
+    const resolved = await resolveGrowTarget(vm);
+    if (!resolved.ok) return fail(resolved.code, resolved.message, { state, ...resolved.extra });
+    grow = resolved.target;
   }
 
-  const plan = planEdit({ params: p, state, hardware, blocks }, dump.stdout);
+  const plan = planEdit({ params: p, state, hardware, grow }, dump.stdout);
   if (!plan.ok) return fail(ErrorCode.VALIDATION_ERROR, plan.message, { state, ...plan.extra });
 
   const outcome = await applySteps(plan.steps);
@@ -123,8 +157,11 @@ export const vmEdit: ToolDefinition = {
   description: [
     'Modifie une VM (liste fermee de champs, au moins un) : vcpus, memory_mib, autostart, description, cpu_model',
     `(${VM_EDIT_LIMITS.cpu_models.join(' | ')}), firmware (bios | uefi), tpm, secure_boot (avec firmware=uefi),`,
-    'boot_order (hd, cdrom, network sans doublon), usb_attach / usb_detach (vendor:product), display (spice | vnc),',
-    'network (reseau libvirt), disk_grow_gb (agrandit le premier disque, sous /var/lib/libvirt seulement).',
+    'boot_order (hd, cdrom, network sans doublon), usb_attach / usb_detach (vendor:product ; attache en',
+    '"optionnel au demarrage" : la VM demarre meme si le peripherique est absent), display (spice | vnc),',
+    'network (reseau libvirt), disk_grow_gb (agrandit le premier disque de N Gio par virsh vol-resize : le disque',
+    'doit etre le volume d\'un pool libvirt ; le systeme de fichiers de l\'invite reste a agrandir).',
+    'Retour au bios depuis l\'UEFI : loader, nvram, firmware et smm sont retires de la configuration, le fichier NVRAM reste sur le disque.',
     `VM ARRETEE obligatoire pour : ${VM_EDIT_NEEDS_STOP.join(', ')} (refus avant toute modification sinon).`,
     `Appliques a chaud quand la VM tourne : ${VM_EDIT_HOT.join(', ')}. Les autres s'ecrivent dans la configuration`,
     'et prennent effet au prochain demarrage. En cas d\'erreur, la reponse liste ce qui a deja ete applique.',

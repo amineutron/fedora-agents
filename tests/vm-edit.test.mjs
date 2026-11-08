@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { installFakeSystem, parse } from './helpers/fake-system.mjs';
 
-// vm_edit contre un faux virsh / virt-xml / qemu-img (aucune VM reelle). Necessite npm run build.
+// vm_edit contre un faux virsh / virt-xml (aucune VM reelle). Necessite npm run build.
 const { vmEdit, VM_EDIT_NEEDS_STOP, VM_EDIT_HOT, vmEditNeedsStop } = await import('../dist/tools/vm-edit.js');
 const { vmEditSchema } = await import('../dist/utils/vm-hub-schemas.js');
 const plan = await import('../dist/utils/vm-edit-plan.js');
@@ -118,9 +118,13 @@ test('firmware et secure boot : syntaxes virt-xml (uefi seul, uefi + secure boot
     'virt-xml vm --edit --boot uefi,loader.secure=yes,firmware.feature0.name=secure-boot,firmware.feature0.enabled=yes'
   ]);
   assert.deepEqual(r.applied, ['firmware', 'secure_boot']);
+  // retour au bios : loader/nvram/firmware retires, puis le <smm state='on'/> du secure boot (SeaBIOS incompatible) ; deux operations = deux appels
   sys = installFakeSystem({ domains: { vm: 'shut off' }, xml: { vm: UEFI } });
   await call({ vm_name: 'vm', firmware: 'bios' });
-  assert.deepEqual(sys.writes(), ['virt-xml vm --edit --boot firmware=bios,xpath1.delete=./loader,xpath2.delete=./nvram,xpath3.delete=./firmware']);
+  assert.deepEqual(sys.writes(), [
+    'virt-xml vm --edit --boot firmware=bios,xpath1.delete=./loader,xpath2.delete=./nvram,xpath3.delete=./firmware',
+    'virt-xml vm --edit --features xpath1.delete=./smm'
+  ]);
 });
 
 test('tpm, cpu_model, display, boot_order : virt-xml --edit / --add-device, sans effet si deja conforme', async () => {
@@ -156,15 +160,15 @@ test('boot_order sur une VM a ordre par peripherique : les <boot order> sont eff
   ]);
 });
 
-test('usb : attache par xpath (sans recherche sur l hote), detache par rang du hostdev, --update a chaud', async () => {
+test('usb : attache par xpath (sans recherche sur l hote) en optionnel au demarrage, detache par rang du hostdev, --update a chaud', async () => {
   let sys = installFakeSystem({ domains: { vm: 'running' }, xml: { vm: UEFI } });
   let r = parse(await call({ vm_name: 'vm', usb_detach: '046D:C52B', usb_attach: 'dead:beef' }));
   assert.deepEqual(sys.writes(), [
     'virt-xml vm --remove-device --hostdev 2 --update',
-    'virt-xml vm --add-device --hostdev type=usb,xpath1.set=./source/vendor/@id,xpath1.value=0xdead,xpath2.set=./source/product/@id,xpath2.value=0xbeef --update'
+    'virt-xml vm --add-device --hostdev type=usb,source.startupPolicy=optional,xpath1.set=./source/vendor/@id,xpath1.value=0xdead,xpath2.set=./source/product/@id,xpath2.value=0xbeef --update'
   ]);
   assert.deepEqual(r.hot, ['usb_detach', 'usb_attach']);
-  assert.deepEqual(r.changes, ['usb detache=046d:c52b', 'usb attache=dead:beef']);
+  assert.deepEqual(r.changes, ['usb detache=046d:c52b', 'usb attache=dead:beef (optionnel au demarrage)']);
   // deja attache / deja absent : rien a faire
   sys = installFakeSystem({ domains: { vm: 'shut off' }, xml: { vm: UEFI } });
   r = parse(await call({ vm_name: 'vm', usb_attach: '046d:c52b', usb_detach: 'dead:beef' }));
@@ -173,19 +177,34 @@ test('usb : attache par xpath (sans recherche sur l hote), detache par rang du h
   assert.match(r.message, /rien a modifier/);
 });
 
-test('disk_grow_gb : qemu-img resize +NG sur le premier disque fichier ; hors /var/lib/libvirt refuse', async () => {
-  let sys = system('shut off', { capacities: { vda: 1 } });
+test('disk_grow_gb : par libvirt (vol-pool, domblkinfo, vol-resize capacite + N Gio, pool-refresh), jamais qemu-img', async () => {
+  const GIB = 1024 ** 3;
+  let sys = system('shut off', { capacities: { vda: 20 * GIB }, volPools: { [DISK.source]: 'default' } });
   const r = parse(await call({ vm_name: 'vm', disk_grow_gb: 10 }));
-  assert.deepEqual(sys.writes(), ['qemu-img resize /var/lib/libvirt/images/arch-base.qcow2 +10G']);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.deepEqual(sys.writes(), [
+    `virsh vol-resize /var/lib/libvirt/images/arch-base.qcow2 ${30 * GIB} --pool default`,
+    'virsh pool-refresh default'
+  ]);
+  assert.deepEqual(sys.calls.map((c) => c.args[2]), ['domstate', 'dumpxml', 'domblklist', 'vol-pool', 'domblkinfo', 'vol-resize', 'pool-refresh']);
+  assert.ok(!sys.calls.some((c) => c.command === 'qemu-img'));
   assert.deepEqual(r.changes, ['disque vda +10G']);
   assert.equal(r.needs_restart, true);
 
-  sys = installFakeSystem({ domains: { vm: 'shut off' }, xml: { vm: ARCH }, blocks: { vm: [{ ...DISK, source: '/mnt/backup_cold/libvirt-images/x.qcow2' }] } });
+  // disque qui n'est le volume d'aucun pool (vol-pool echoue) : refus avant toute modification
+  sys = installFakeSystem({ domains: { vm: 'shut off' }, xml: { vm: ARCH }, capacities: { vda: GIB }, blocks: { vm: [{ ...DISK, source: '/srv/images/x.qcow2' }] } });
   let bad = await call({ vm_name: 'vm', disk_grow_gb: 10, autostart: true });
   assert.equal(bad.isError, true);
   assert.equal(parse(bad).code, 'VALIDATION_ERROR');
-  assert.match(parse(bad).error, /n'est pas sous \/var\/lib\/libvirt/);
+  assert.match(parse(bad).error, /volume d'aucun pool libvirt/);
   assert.deepEqual(sys.writes(), [], 'refus AVANT toute modification, autostart compris');
+
+  // capacite illisible : refus aussi
+  sys = system('shut off', { volPools: { [DISK.source]: 'default' } });
+  bad = await call({ vm_name: 'vm', disk_grow_gb: 1 });
+  assert.equal(parse(bad).code, 'SCRIPT_ERROR');
+  assert.match(parse(bad).error, /capacite actuelle.*illisible/);
+  assert.deepEqual(sys.writes(), []);
 
   sys = installFakeSystem({ domains: { vm: 'shut off' }, xml: { vm: ARCH }, blocks: { vm: [{ ...DISK, device: 'cdrom', source: '-' }] } });
   bad = await call({ vm_name: 'vm', disk_grow_gb: 1 });

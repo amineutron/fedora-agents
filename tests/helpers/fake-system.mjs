@@ -21,6 +21,7 @@ const flag = (args, name) => args[args.indexOf(name) + 1];
  * @param {Record<string,string>} [init.xml]      nom de VM -> XML rendu par dumpxml
  * @param {Record<string,Array<{type:string,device:string,target:string,source:string}>>} [init.blocks]  nom de VM -> lignes de domblklist
  * @param {Record<string,number>} [init.capacities]  cible de disque -> capacite en octets (domblkinfo)
+ * @param {Record<string,string>} [init.volPools]   chemin de volume -> pool libvirt (vol-pool) ; absent = pas un volume
  * @param {Record<string,boolean>} [init.autostart]  nom de VM -> demarrage automatique (dominfo)
  * @param {Record<string,{code?:number,stderr?:string,when?:(args:string[])=>boolean}>} [init.fail]
  *   sous-commande virsh (ou `virt-xml`, `qemu-img`) -> echec force ; `when` limite l'echec a certains arguments
@@ -65,6 +66,10 @@ export function installFakeSystem(init = {}) {
         return bytes === undefined ? res(1, '', 'error: invalid argument') : res(0, `Capacity:       ${bytes}\nAllocation:     ${bytes}\nPhysical:       ${bytes}\n`);
       }
       case 'dominfo': return res(0, `Name:           ${vm}\nAutostart:      ${init.autostart?.[vm] ? 'enable' : 'disable'}\n`);
+      case 'vol-pool': {
+        const pool = init.volPools?.[vm];
+        return pool ? res(0, `${pool}\n`) : res(1, '', `error: failed to get vol '${vm}'\nerror: Storage volume not found: no storage vol with matching path '${vm}'`);
+      }
       case 'domstate':
         return vm in state.domains ? res(0, `${state.domains[vm]}\n`) : res(1, '', `error: failed to get domain '${vm}'`);
       case 'suspend': state.domains[vm] = 'paused'; return res(0, `Domain '${vm}' suspended\n`);
@@ -163,7 +168,7 @@ export function installFakeSystem(init = {}) {
     .map((c) => c.args[2]);
   /** Toutes les commandes qui ecrivent, en une ligne chacune (virsh sans son `-c URI`, virt-xml sans son `--connect URI`) */
   state.writes = () => state.calls
-    .filter((c) => !(c.command === 'virsh' && ['domstate', 'dumpxml', 'domblklist', 'domblkinfo', 'dominfo', 'list', 'net-list', 'vol-list', 'vol-path', 'snapshot-current'].includes(c.args[2])))
+    .filter((c) => !(c.command === 'virsh' && ['domstate', 'dumpxml', 'domblklist', 'domblkinfo', 'dominfo', 'list', 'net-list', 'vol-list', 'vol-path', 'vol-pool', 'snapshot-current'].includes(c.args[2])))
     .map((c) => {
       if (c.command === 'virsh') return `virsh ${c.args.slice(2).join(' ')}`;
       if (c.command === 'virt-xml') return `virt-xml ${[c.args[0], ...c.args.slice(3)].join(' ')}`;
