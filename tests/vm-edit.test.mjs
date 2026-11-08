@@ -1,0 +1,292 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { installFakeSystem, parse } from './helpers/fake-system.mjs';
+
+// vm_edit contre un faux virsh / virt-xml (aucune VM reelle). Necessite npm run build.
+const { vmEdit, VM_EDIT_NEEDS_STOP, VM_EDIT_HOT, vmEditNeedsStop } = await import('../dist/tools/vm-edit.js');
+const { vmEditSchema } = await import('../dist/utils/vm-hub-schemas.js');
+const plan = await import('../dist/utils/vm-edit-plan.js');
+
+const ARCH = readFileSync(new URL('./fixtures/arch-base.xml', import.meta.url), 'utf8');
+const UEFI = readFileSync(new URL('./fixtures/uefi-tpm.xml', import.meta.url), 'utf8');
+const DISK = { type: 'file', device: 'disk', target: 'vda', source: '/var/lib/libvirt/images/arch-base.qcow2' };
+const call = (params) => vmEdit.handler(params);
+const system = (state, extra = {}) => installFakeSystem({ domains: { vm: state }, xml: { vm: ARCH }, blocks: { vm: [DISK] }, ...extra });
+
+test('constantes exportees et vmEditNeedsStop', () => {
+  assert.deepEqual([...VM_EDIT_NEEDS_STOP], ['vcpus', 'memory_mib', 'cpu_model', 'firmware', 'tpm', 'secure_boot', 'disk_grow_gb']);
+  assert.deepEqual([...VM_EDIT_HOT], ['usb_attach', 'usb_detach', 'network']);
+  assert.equal(vmEditNeedsStop({ vcpus: 2 }), true);
+  assert.equal(vmEditNeedsStop({ autostart: true, network: 'default' }), false);
+});
+
+test('schema : au moins un champ, secure_boot exige uefi, boot_order sans doublon, usb distincts, strict', () => {
+  const bad = (input, why = '') => assert.equal(vmEditSchema.safeParse({ vm_name: 'vm', ...input }).success, false, `${JSON.stringify(input)} ${why}`);
+  bad({});
+  bad({ secure_boot: true });
+  bad({ secure_boot: false, firmware: 'bios' });
+  bad({ boot_order: ['hd', 'hd'] });
+  bad({ boot_order: [] });
+  bad({ usb_attach: '046d:c52b', usb_detach: '046D:C52B' });
+  bad({ usb_attach: '46d:c52b' });
+  bad({ cpu_model: 'Skylake' });
+  bad({ disk_grow_gb: 0 });
+  bad({ disk_grow_gb: -5 });
+  bad({ description: 'a\u0007b' });
+  bad({ description: '-x' }, 'un tiret en tete serait lu comme une option par virsh');
+  bad({ description: '--config' });
+  for (const network of ['-lab', 'a,model=e1000', 'a=b', 'lab net']) bad({ network }, 'reseau : option-string virt-xml impossible');
+  bad({ vcpus: 2, xml: '<x/>' });
+  assert.equal(vmEditSchema.safeParse({ vm_name: 'vm', secure_boot: true, firmware: 'uefi' }).success, true);
+  assert.equal(vmEditSchema.safeParse({ vm_name: 'vm', tpm: 'true', description: '' }).success, true);
+  assert.equal(vmEditSchema.safeParse({ vm_name: 'vm', description: 'web, prod = oui -- a garder' }).success, true, 'virgule, = et tirets ailleurs sont permis (un seul argv pour virsh)');
+});
+
+test('refus VM non arretee (running, paused, crashed) pour un champ NEEDS_STOP : aucune commande hormis la lecture d etat', async () => {
+  for (const state of ['running', 'paused', 'crashed']) {
+    for (const field of [{ vcpus: 4 }, { memory_mib: 2048 }, { cpu_model: 'host-model' }, { firmware: 'uefi' }, { tpm: true }, { disk_grow_gb: 5 }]) {
+      const sys = system(state);
+      const r = await call({ vm_name: 'vm', autostart: true, ...field });
+      assert.equal(r.isError, true, `${state} ${JSON.stringify(field)}`);
+      assert.equal(parse(r).code, 'VALIDATION_ERROR');
+      assert.equal(parse(r).state, state);
+      assert.match(parse(r).error, /exige.*une VM arretee/);
+      assert.match(parse(r).error, new RegExp(Object.keys(field)[0]));
+      assert.deepEqual(sys.calls.map((c) => c.args[2]), ['domstate'], 'autostart n est pas applique non plus');
+    }
+  }
+});
+
+test('planification sur le XML INACTIF : un hostdev branche a chaud ne decale pas le rang, les skipped lisent la config persistante', async () => {
+  // live : dead:beef branche a chaud en PREMIER hostdev (non persistant) ; inactif : PCI puis 046d:c52b (rang 2)
+  const hot = '<hostdev mode="subsystem" type="usb" managed="yes"><source><vendor id="0xdead"/><product id="0xbeef"/></source></hostdev>';
+  const live = UEFI.replace('<hostdev mode="subsystem" type="pci"', `${hot}<hostdev mode="subsystem" type="pci"`);
+  const sys = installFakeSystem({ domains: { vm: 'running' }, xml: { vm: live }, xmlInactive: { vm: UEFI } });
+  const r = parse(await call({ vm_name: 'vm', usb_detach: '046d:c52b', usb_attach: 'dead:beef' }));
+  assert.deepEqual(sys.virshCalls('dumpxml').map((c) => c.args.slice(2)), [['dumpxml', '--inactive', 'vm']]);
+  assert.deepEqual(sys.writes(), [
+    'virt-xml vm --remove-device --hostdev 2 --update',
+    'virt-xml vm --add-device --hostdev type=usb,source.startupPolicy=optional,xpath1.set=./source/vendor/@id,xpath1.value=0xdead,xpath2.set=./source/product/@id,xpath2.value=0xbeef --update'
+  ], 'd apres le live : rang 3 (mauvais peripherique) et dead:beef « deja attache »');
+  assert.deepEqual(r.skipped, []);
+});
+
+test('vcpus + memoire sur VM arretee : sequence setvcpus --maximum, setvcpus, setmaxmem, setmem (--config, KiB)', async () => {
+  const sys = system('shut off');
+  const r = await call({ vm_name: 'vm', vcpus: 4, memory_mib: 4096 });
+  assert.equal(r.isError, undefined, r.content[0].text);
+  assert.deepEqual(sys.writes(), [
+    'virsh setvcpus vm 4 --maximum --config',
+    'virsh setvcpus vm 4 --config',
+    'virsh setmaxmem vm 4194304 --config',
+    'virsh setmem vm 4194304 --config'
+  ]);
+  const p = parse(r);
+  assert.deepEqual(p.changes, ['vcpus=4', 'memoire=4096MiB']);
+  assert.deepEqual(p.applied, ['vcpus', 'memory_mib']);
+  assert.equal(p.needs_restart, true);
+  assert.deepEqual(p.hot, []);
+  assert.match(p.message, /effectif au prochain demarrage/);
+  assert.deepEqual(sys.violations, []);
+});
+
+test('vcpus : si libvirt refuse --maximum en premier, l ordre inverse est essaye', async () => {
+  let maxCalls = 0;
+  const sys = system('shut off', { fail: { setvcpus: { stderr: 'error: invalid argument', when: (args) => args.includes('--maximum') && ++maxCalls === 1 } } });
+  const r = await call({ vm_name: 'vm', vcpus: 1 });
+  assert.equal(r.isError, undefined, r.content[0].text);
+  assert.deepEqual(sys.writes(), [
+    'virsh setvcpus vm 1 --maximum --config',
+    'virsh setvcpus vm 1 --config',
+    'virsh setvcpus vm 1 --maximum --config'
+  ]);
+});
+
+test('network a chaud : --update ajoute quand la VM tourne, pas quand elle est arretee', async () => {
+  let sys = system('running');
+  let r = parse(await call({ vm_name: 'vm', network: 'lab' }));
+  assert.deepEqual(sys.writes(), ['virt-xml vm --edit --network network=lab --update']);
+  assert.deepEqual(r.hot, ['network']);
+  assert.equal(r.needs_restart, false);
+  sys = system('shut off');
+  r = parse(await call({ vm_name: 'vm', network: 'lab' }));
+  assert.deepEqual(sys.writes(), ['virt-xml vm --edit --network network=lab']);
+  assert.deepEqual(r.hot, []);
+  // reseau deja en place : rien n'est lance
+  sys = system('running');
+  r = parse(await call({ vm_name: 'vm', network: 'default' }));
+  assert.deepEqual(sys.writes(), []);
+  assert.deepEqual(r.skipped, ['reseau deja default']);
+});
+
+test('secure_boot sans uefi est refuse par le schema avant tout appel', async () => {
+  const sys = system('shut off');
+  await assert.rejects(call({ vm_name: 'vm', secure_boot: true }));
+  await assert.rejects(call({ vm_name: 'vm', secure_boot: true, firmware: 'bios' }));
+  assert.deepEqual(sys.calls, []);
+});
+
+test('firmware et secure boot : syntaxes virt-xml (uefi seul, uefi + secure boot, retour au bios)', async () => {
+  let sys = system('shut off');
+  await call({ vm_name: 'vm', firmware: 'uefi' });
+  assert.deepEqual(sys.writes(), ['virt-xml vm --edit --boot uefi']);
+  sys = system('shut off');
+  const r = parse(await call({ vm_name: 'vm', firmware: 'uefi', secure_boot: true }));
+  assert.deepEqual(sys.writes(), [
+    'virt-xml vm --edit --boot xpath1.delete=./firmware,xpath2.delete=./loader,xpath3.delete=./nvram',
+    'virt-xml vm --edit --boot uefi,loader.secure=yes,firmware.feature0.name=secure-boot,firmware.feature0.enabled=yes'
+  ]);
+  assert.deepEqual(r.applied, ['firmware', 'secure_boot']);
+  // retour au bios en UNE definition : l'attribut firmware est RETIRE (valeur vide ; pas de descripteur SeaBIOS
+  // sur Fedora, donc firmware=bios echoue toujours), loader/nvram/firmware et le <smm state='on'/> du secure boot
+  // partent dans le meme appel (option --xml = xpath sur tout le domaine)
+  sys = installFakeSystem({ domains: { vm: 'shut off' }, xml: { vm: UEFI } });
+  await call({ vm_name: 'vm', firmware: 'bios' });
+  assert.deepEqual(sys.writes(), [
+    'virt-xml vm --edit --xml ./os/@firmware= --xml xpath.delete=./os/loader --xml xpath.delete=./os/nvram --xml xpath.delete=./os/firmware --xml xpath.delete=./features/smm'
+  ]);
+  assert.ok(!sys.writes()[0].includes('xpath.delete=./os/@firmware'), 'supprimer l attribut par xpath.delete efface tout <os>');
+  // deja bios (sans attribut) / deja uefi : rien n'est lance
+  sys = system('shut off');
+  let same = parse(await call({ vm_name: 'vm', firmware: 'bios' }));
+  assert.deepEqual(sys.writes(), []);
+  assert.deepEqual(same.skipped, ['firmware deja bios']);
+  sys = installFakeSystem({ domains: { vm: 'shut off' }, xml: { vm: UEFI } });
+  same = parse(await call({ vm_name: 'vm', firmware: 'uefi' }));
+  assert.deepEqual(sys.writes(), []);
+  assert.deepEqual(same.skipped, ['firmware deja uefi']);
+});
+
+test('tpm, cpu_model, display, boot_order : virt-xml --edit / --add-device, sans effet si deja conforme', async () => {
+  let sys = system('shut off');
+  let r = parse(await call({ vm_name: 'vm', tpm: true, cpu_model: 'host-model', display: 'vnc', boot_order: ['cdrom', 'hd'] }));
+  assert.deepEqual(sys.writes(), [
+    'virt-xml vm --edit --cpu host-model',
+    'virt-xml vm --add-device --tpm default',
+    'virt-xml vm --edit --boot cdrom,hd',
+    'virt-xml vm --edit --graphics vnc'
+  ]);
+  assert.deepEqual(r.changes, ['modele cpu=host-model', 'tpm=oui', 'ordre de demarrage=cdrom,hd', 'affichage=vnc']);
+  // VM UEFI avec TPM et vnc : tpm=false le retire, display=vnc et tpm=true seraient sans effet
+  sys = installFakeSystem({ domains: { vm: 'shut off' }, xml: { vm: UEFI } });
+  r = parse(await call({ vm_name: 'vm', tpm: false, display: 'vnc' }));
+  assert.deepEqual(sys.writes(), ['virt-xml vm --remove-device --tpm all']);
+  assert.deepEqual(r.skipped, ['affichage deja vnc']);
+  // sans affichage : --add-device en ecoute locale
+  sys = installFakeSystem({ domains: { vm: 'running' }, xml: { vm: ARCH.replace(/<graphics[\s\S]*?<\/graphics>/, '') } });
+  r = parse(await call({ vm_name: 'vm', display: 'spice' }));
+  assert.deepEqual(sys.writes(), ['virt-xml vm --add-device --graphics spice,listen=127.0.0.1']);
+  assert.equal(r.needs_restart, true, 'VM en marche : effectif au prochain demarrage');
+});
+
+test('boot_order sur une VM a ordre par peripherique : les <boot order> sont effaces d abord', async () => {
+  const xml = ARCH.replace("<boot dev='hd'/>", '').replace("<target dev='vda' bus='virtio'/>", "<target dev='vda' bus='virtio'/><boot order='1'/>");
+  const sys = installFakeSystem({ domains: { vm: 'shut off' }, xml: { vm: xml } });
+  await call({ vm_name: 'vm', boot_order: ['hd', 'cdrom', 'network'] });
+  assert.deepEqual(sys.writes(), [
+    'virt-xml vm --edit all --disk xpath1.delete=./boot',
+    'virt-xml vm --edit all --network xpath1.delete=./boot',
+    'virt-xml vm --edit --boot hd,cdrom,network'
+  ]);
+});
+
+test('usb : attache par xpath (sans recherche sur l hote) en optionnel au demarrage, detache par rang du hostdev, --update a chaud', async () => {
+  let sys = installFakeSystem({ domains: { vm: 'running' }, xml: { vm: UEFI } });
+  let r = parse(await call({ vm_name: 'vm', usb_detach: '046D:C52B', usb_attach: 'dead:beef' }));
+  assert.deepEqual(sys.writes(), [
+    'virt-xml vm --remove-device --hostdev 2 --update',
+    'virt-xml vm --add-device --hostdev type=usb,source.startupPolicy=optional,xpath1.set=./source/vendor/@id,xpath1.value=0xdead,xpath2.set=./source/product/@id,xpath2.value=0xbeef --update'
+  ]);
+  assert.deepEqual(r.hot, ['usb_detach', 'usb_attach']);
+  assert.deepEqual(r.changes, ['usb detache=046d:c52b', 'usb attache=dead:beef (optionnel au demarrage)']);
+  // deja attache / deja absent : rien a faire
+  sys = installFakeSystem({ domains: { vm: 'shut off' }, xml: { vm: UEFI } });
+  r = parse(await call({ vm_name: 'vm', usb_attach: '046d:c52b', usb_detach: 'dead:beef' }));
+  assert.deepEqual(sys.writes(), []);
+  assert.deepEqual(r.skipped, ['peripherique dead:beef non attache', 'peripherique 046d:c52b deja attache']);
+  assert.match(r.message, /rien a modifier/);
+});
+
+test('disk_grow_gb : par libvirt (vol-pool, domblkinfo, vol-resize capacite + N Gio, pool-refresh), jamais qemu-img', async () => {
+  const GIB = 1024 ** 3;
+  let sys = system('shut off', { capacities: { vda: 20 * GIB }, volPools: { [DISK.source]: 'default' } });
+  const r = parse(await call({ vm_name: 'vm', disk_grow_gb: 10 }));
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.deepEqual(sys.writes(), [
+    `virsh vol-resize /var/lib/libvirt/images/arch-base.qcow2 ${30 * GIB} --pool default`,
+    'virsh pool-refresh default'
+  ]);
+  assert.deepEqual(sys.calls.map((c) => c.args[2]), ['domstate', 'dumpxml', 'domblklist', 'vol-pool', 'domblkinfo', 'vol-resize', 'pool-refresh']);
+  assert.ok(!sys.calls.some((c) => c.command === 'qemu-img'));
+  assert.deepEqual(r.changes, ['disque vda +10G']);
+  assert.equal(r.needs_restart, true);
+
+  // disque qui n'est le volume d'aucun pool (vol-pool echoue) : refus avant toute modification
+  sys = installFakeSystem({ domains: { vm: 'shut off' }, xml: { vm: ARCH }, capacities: { vda: GIB }, blocks: { vm: [{ ...DISK, source: '/srv/images/x.qcow2' }] } });
+  let bad = await call({ vm_name: 'vm', disk_grow_gb: 10, autostart: true });
+  assert.equal(bad.isError, true);
+  assert.equal(parse(bad).code, 'VALIDATION_ERROR');
+  assert.match(parse(bad).error, /volume d'aucun pool libvirt/);
+  assert.deepEqual(sys.writes(), [], 'refus AVANT toute modification, autostart compris');
+  assert.deepEqual(sys.calls.map((c) => c.args[2]), ['domstate', 'dumpxml', 'domblklist', 'vol-pool'], 'lectures seulement, rien apres vol-pool');
+
+  // capacite illisible : refus aussi
+  sys = system('shut off', { volPools: { [DISK.source]: 'default' } });
+  bad = await call({ vm_name: 'vm', disk_grow_gb: 1 });
+  assert.equal(parse(bad).code, 'SCRIPT_ERROR');
+  assert.match(parse(bad).error, /capacite actuelle.*illisible/);
+  assert.deepEqual(sys.writes(), []);
+
+  sys = installFakeSystem({ domains: { vm: 'shut off' }, xml: { vm: ARCH }, blocks: { vm: [{ ...DISK, device: 'cdrom', source: '-' }] } });
+  bad = await call({ vm_name: 'vm', disk_grow_gb: 1 });
+  assert.match(parse(bad).error, /aucun disque/);
+});
+
+test('erreur a mi-chemin : arret immediat, applied partiel, champ en echec nomme, les DEUX ordres essayes sont rapportes', async () => {
+  const sys = system('shut off', { fail: { setmaxmem: { stderr: 'error: cannot set max memory' }, setmem: { stderr: 'error: cannot set current memory' } } });
+  const r = await call({ vm_name: 'vm', vcpus: 2, memory_mib: 8192, autostart: true });
+  assert.equal(r.isError, true);
+  const p = parse(r);
+  assert.equal(p.code, 'SCRIPT_ERROR');
+  assert.match(p.error, /^memoire=8192MiB : tentative 1 : error: cannot set max memory ; tentative 2 : error: cannot set current memory$/);
+  assert.deepEqual(p.applied, ['vcpus']);
+  assert.deepEqual(p.changes, ['vcpus=2']);
+  assert.deepEqual(p.failed, ['memory_mib']);
+  assert.ok(!sys.writes().some((w) => w.startsWith('virsh autostart')), 'les champs suivants ne sont pas appliques');
+  // les deux ordres ont ete essayes, chacun arrete a sa premiere commande en echec
+  assert.deepEqual(sys.writes().filter((w) => /^virsh set(max)?mem/.test(w)), ['virsh setmaxmem vm 8388608 --config', 'virsh setmem vm 8388608 --config']);
+});
+
+test('autostart et description : virsh autostart [--disable], virsh desc --config --new-desc (chaine vide = effacer)', async () => {
+  let sys = system('running');
+  let r = parse(await call({ vm_name: 'vm', autostart: true, description: 'serveur web' }));
+  assert.deepEqual(sys.writes(), ['virsh autostart vm', 'virsh desc vm --config --new-desc serveur web']);
+  assert.deepEqual(r.changes, ['autostart=true', 'description']);
+  assert.equal(r.needs_restart, false);
+  sys = system('paused');
+  r = parse(await call({ vm_name: 'vm', autostart: 'false', description: '' }));
+  assert.deepEqual(sys.writes(), ['virsh autostart --disable vm', 'virsh desc vm --config --new-desc ']);
+  assert.deepEqual(r.changes, ['autostart=false', 'description effacee']);
+});
+
+test('VM inconnue -> VM_NOT_FOUND ; dumpxml en echec -> SCRIPT_ERROR sans modification', async () => {
+  installFakeSystem({ domains: {} });
+  assert.equal(parse(await call({ vm_name: 'fantome', autostart: true })).code, 'VM_NOT_FOUND');
+  const sys = installFakeSystem({ domains: { vm: 'shut off' } });
+  const r = await call({ vm_name: 'vm', autostart: true });
+  assert.equal(parse(r).code, 'SCRIPT_ERROR');
+  assert.deepEqual(sys.writes(), []);
+});
+
+test('plan pur : needsRestart et hotFields', () => {
+  assert.equal(plan.needsRestart(['vcpus'], 'shut off'), true);
+  assert.equal(plan.needsRestart(['autostart', 'description'], 'running'), false);
+  assert.equal(plan.needsRestart(['network'], 'running'), false);
+  assert.equal(plan.needsRestart(['network'], 'paused'), true, 'VM en pause : pas de --update, effectif au prochain demarrage');
+  assert.equal(plan.needsRestart(['boot_order'], 'running'), true);
+  assert.equal(plan.needsRestart(['boot_order'], 'shut off'), false);
+  assert.deepEqual(plan.hotFields(['network', 'autostart', 'usb_attach'], 'running'), ['network', 'usb_attach']);
+  assert.deepEqual(plan.hotFields(['network'], 'paused'), []);
+  assert.deepEqual(plan.growableDisk(null), { ok: false, message: 'disk_grow_gb : aucun disque de type fichier sur cette VM' });
+});

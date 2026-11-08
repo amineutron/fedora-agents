@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { installFakeSystem, parse } from './helpers/fake-system.mjs';
@@ -130,6 +130,7 @@ test('vm_console_log : un journal hors des dossiers autorises n est jamais lu', 
   assert.equal(r.isError, true);
   assert.doesNotMatch(r.content[0].text, /root:x/);
   assert.equal(parse(r).code, 'PERMISSION_DENIED');
+  assert.equal(parse(r).reason, 'hors_racines');
   // 2) lien symbolique qui sort du dossier autorise
   const link = join(allowed, 'vm.log');
   symlinkSync(secret, link);
@@ -144,12 +145,64 @@ test('vm_console_log : un journal hors des dossiers autorises n est jamais lu', 
   }
 });
 
-test('vm_console_log : journal absent ou illisible -> erreur claire avec les dossiers autorises', async () => {
+test('vm_console_log : journal absent -> VALIDATION_ERROR "fichier absent", pas un probleme de droits', async () => {
   logSetup(null);
   const r = await vmConsoleLog.handler({ vm_name: 'vm' });
   assert.equal(r.isError, true);
-  assert.equal(parse(r).code, 'PERMISSION_DENIED');
+  assert.equal(parse(r).code, 'VALIDATION_ERROR');
+  assert.equal(parse(r).reason, 'absent');
+  assert.match(parse(r).error, /n'existe pas/);
+  assert.doesNotMatch(parse(r).error, /droits insuffisants/);
   assert.ok(parse(r).allowed_roots.includes('/var/log/libvirt'));
+});
+
+test('vm_console_log : un chemin hors des racines est "hors_racines", qu il existe ou non (on ne sonde pas le disque)', async () => {
+  const allowed = mkdtempSync(join(tmpdir(), 'fa-allowed-'));
+  process.env.VM_CONSOLE_LOG_DIRS = allowed;
+  const outside = join(mkdtempSync(join(tmpdir(), 'fa-out-')), 'nope.log');
+  installFakeSystem({ domains: { vm: 'running' }, xml: { vm: dom('', `<serial type='file'><source path='${outside}'/></serial>`) } });
+  const r = parse(await vmConsoleLog.handler({ vm_name: 'vm' }));
+  assert.equal(r.reason, 'hors_racines');
+  assert.equal(r.code, 'PERMISSION_DENIED');
+});
+
+test('vm_console_log : plusieurs candidats -> la raison la plus grave l emporte (droits > absent > hors racines)', { skip: process.getuid?.() === 0 && 'root lit tout' }, async () => {
+  const { allowed } = logSetup(null);
+  const locked = join(allowed, 'locked.log');
+  writeFileSync(locked, 'x\n');
+  chmodSync(locked, 0o000);
+  const serial = `<serial type='pty'><log file='${join(allowed, 'vm-serial0.log')}' append='on'/></serial>`
+    + `<serial type='file'><source path='${locked}'/></serial><serial type='file'><source path='/elsewhere/x.log'/></serial>`;
+  installFakeSystem({ domains: { vm: 'running' }, xml: { vm: dom('', serial) } });
+  const r = parse(await vmConsoleLog.handler({ vm_name: 'vm' }));
+  assert.equal(r.reason, 'droits');
+  assert.equal(r.path, locked);
+  assert.equal(r.code, 'PERMISSION_DENIED');
+});
+
+test('vm_console_log : journal present mais illisible -> PERMISSION_DENIED "droits insuffisants" (setfacl)', { skip: process.getuid?.() === 0 && 'root lit tout' }, async () => {
+  const { logPath } = logSetup('secret\n');
+  chmodSync(logPath, 0o000);
+  const r = await vmConsoleLog.handler({ vm_name: 'vm' });
+  assert.equal(r.isError, true);
+  assert.equal(parse(r).code, 'PERMISSION_DENIED');
+  assert.equal(parse(r).reason, 'droits');
+  assert.match(parse(r).error, /droits insuffisants.*setfacl/);
+  assert.doesNotMatch(r.content[0].text, /secret/);
+});
+
+test('vm_console_log : dossier parent interdit (cas /var/log/libvirt en 700 root) -> droits, pas absent', { skip: process.getuid?.() === 0 && 'root lit tout' }, async () => {
+  const root = mkdtempSync(join(tmpdir(), 'fa-closed-'));
+  const closed = join(root, 'qemu');
+  mkdirSync(closed);
+  writeFileSync(join(closed, 'vm-serial0.log'), 'x\n');
+  chmodSync(closed, 0o000);
+  process.env.VM_CONSOLE_LOG_DIRS = root;
+  installFakeSystem({ domains: { vm: 'running' }, xml: { vm: dom('', `<serial type='pty'><log file='${join(closed, 'vm-serial0.log')}' append='on'/></serial>`) } });
+  const r = await vmConsoleLog.handler({ vm_name: 'vm' });
+  chmodSync(closed, 0o700);
+  assert.equal(parse(r).code, 'PERMISSION_DENIED');
+  assert.equal(parse(r).reason, 'droits');
 });
 
 test('vm_console_log : serie sans journal (pty) -> explication', async () => {

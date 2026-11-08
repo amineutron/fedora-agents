@@ -56,7 +56,7 @@ ${backupTools}
 📦 OUTILS PORTABILITE (export / import de VMs):
 ${portabilityTools}
 
-🚀 OUTILS HUB (pause, redémarrage, création depuis une image, console):
+🚀 OUTILS HUB (pause, redémarrage, création depuis une image, console, matériel : vm_hardware lit, vm_edit modifie):
 ${hubTools}
 
 📋 EXEMPLES D'UTILISATION:
@@ -68,6 +68,7 @@ ${hubTools}
   - Exporter une VM: vm_export avec vm_name="preprod" mode="classic"
   - Importer une VM: vm_import avec archive_path="/path/to/vm.tar.gz"
   - Créer une VM: vm_create_from_image avec name="test" image_id="debian-cloud" dry_run=true
+  - Matériel d'une VM: vm_hardware avec vm_name="test" ; modifier: vm_edit avec vm_name="test" vcpus=4 (VM arrêtée)
 
 ⚠️  IMPORTANT: Utilise ces outils pour les VMs et backups.
     N'utilise PAS filesystem pour les opérations VM/backup.

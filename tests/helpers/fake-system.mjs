@@ -1,4 +1,4 @@
-// Faux systeme pour les tests des outils "hub" : simule virsh, qemu-img, xorriso, virt-builder et curl.
+// Faux systeme pour les tests des outils "hub" : simule virsh, virt-xml, qemu-img, xorriso, virt-builder et curl.
 // AUCUNE commande reelle n'est lancee : tout passe par la couture `setRunner` de dist/utils/runner.js.
 // Toute commande hors de cette liste, ou virsh sans `-c qemu:///system`, fait echouer le test.
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
@@ -6,7 +6,7 @@ import { dirname } from 'node:path';
 
 const { setRunner } = await import('../../dist/utils/runner.js');
 
-const ALLOWED = new Set(['virsh', 'qemu-img', 'xorriso', 'virt-builder', 'curl']);
+const ALLOWED = new Set(['virsh', 'virt-xml', 'qemu-img', 'xorriso', 'virt-builder', 'curl']);
 const GIB = 1024 ** 3;
 
 const res = (code, stdout = '', stderr = '') => ({ code, stdout, stderr });
@@ -18,8 +18,14 @@ const flag = (args, name) => args[args.indexOf(name) + 1];
  * @param {string[]} [init.networks]
  * @param {string[]} [init.volumes]               volumes deja presents dans le pool
  * @param {Record<string,object>} [init.images]   chemin -> sortie JSON de `qemu-img info`
- * @param {Record<string,string>} [init.xml]      nom de VM -> XML rendu par dumpxml
- * @param {Record<string,{code?:number,stderr?:string}>} [init.fail]  sous-commande -> echec force
+ * @param {Record<string,string>} [init.xml]      nom de VM -> XML rendu par dumpxml (live)
+ * @param {Record<string,string>} [init.xmlInactive]  nom de VM -> XML rendu par `dumpxml --inactive` (defaut : le live)
+ * @param {Record<string,Array<{type:string,device:string,target:string,source:string}>>} [init.blocks]  nom de VM -> lignes de domblklist
+ * @param {Record<string,number>} [init.capacities]  cible de disque -> capacite en octets (domblkinfo)
+ * @param {Record<string,string>} [init.volPools]   chemin de volume -> pool libvirt (vol-pool) ; absent = pas un volume
+ * @param {Record<string,boolean>} [init.autostart]  nom de VM -> demarrage automatique (dominfo)
+ * @param {Record<string,{code?:number,stderr?:string,when?:(args:string[])=>boolean}>} [init.fail]
+ *   sous-commande virsh (ou `virt-xml`, `qemu-img`) -> echec force ; `when` limite l'echec a certains arguments
  */
 export function installFakeSystem(init = {}) {
   const state = {
@@ -36,13 +42,35 @@ export function installFakeSystem(init = {}) {
     violations: []
   };
   const failures = init.fail ?? {};
+  const forced = (key, args) => {
+    const f = failures[key];
+    if (!f || (f.when && !f.when(args))) return null;
+    return res(f.code ?? 1, '', f.stderr ?? `${key} failed`);
+  };
+  const blkList = (vm) => {
+    const rows = init.blocks?.[vm] ?? [];
+    return ` Type   Device   Target   Source\n------------------------------------------------\n${rows.map((r) => ` ${r.type}   ${r.device}   ${r.target}   ${r.source}`).join('\n')}\n`;
+  };
 
   function virsh(args) {
     if (args[0] !== '-c' || args[1] !== 'qemu:///system') state.violations.push(`virsh sans -c qemu:///system: ${args.join(' ')}`);
     const [sub, ...rest] = args.slice(2);
-    if (failures[sub]) return res(failures[sub].code ?? 1, '', failures[sub].stderr ?? `${sub} failed`);
+    const fail = forced(sub, rest);
+    if (fail) return fail;
     const vm = rest[0];
     switch (sub) {
+      case 'setvcpus': case 'setmaxmem': case 'setmem': case 'desc': return res(0);
+      case 'autostart': return res(0, `Domain marked as autostarted\n`);
+      case 'domblklist': return vm in state.domains ? res(0, blkList(vm)) : res(1, '', `error: failed to get domain '${vm}'`);
+      case 'domblkinfo': {
+        const bytes = init.capacities?.[rest[1]];
+        return bytes === undefined ? res(1, '', 'error: invalid argument') : res(0, `Capacity:       ${bytes}\nAllocation:     ${bytes}\nPhysical:       ${bytes}\n`);
+      }
+      case 'dominfo': return res(0, `Name:           ${vm}\nAutostart:      ${init.autostart?.[vm] ? 'enable' : 'disable'}\n`);
+      case 'vol-pool': {
+        const pool = init.volPools?.[vm];
+        return pool ? res(0, `${pool}\n`) : res(1, '', `error: failed to get vol '${vm}'\nerror: Storage volume not found: no storage vol with matching path '${vm}'`);
+      }
       case 'domstate':
         return vm in state.domains ? res(0, `${state.domains[vm]}\n`) : res(1, '', `error: failed to get domain '${vm}'`);
       case 'suspend': state.domains[vm] = 'paused'; return res(0, `Domain '${vm}' suspended\n`);
@@ -73,7 +101,11 @@ export function installFakeSystem(init = {}) {
         return res(0, `Domain '${name}' defined\n`);
       }
       case 'undefine': delete state.domains[vm]; return res(0);
-      case 'dumpxml': return vm in state.xml ? res(0, state.xml[vm]) : res(1, '', `error: failed to get domain '${vm}'`);
+      case 'dumpxml': {
+        const name = rest.find((a) => !a.startsWith('--'));
+        const xml = rest.includes('--inactive') ? (init.xmlInactive?.[name] ?? state.xml[name]) : state.xml[name];
+        return xml !== undefined ? res(0, xml) : res(1, '', `error: failed to get domain '${name}'`);
+      }
       case 'snapshot-current':
         return state.snapshotCurrent ? res(0, `${state.snapshotCurrent}\n`) : res(1, '', 'error: domain has no current snapshot');
       default: return res(1, '', `fake virsh: sous-commande inattendue ${sub}`);
@@ -81,6 +113,13 @@ export function installFakeSystem(init = {}) {
   }
 
   function other(cmd, args) {
+    const fail = forced(cmd, args);
+    if (fail && (cmd === 'virt-xml' || cmd === 'qemu-img')) return fail;
+    if (cmd === 'virt-xml') {
+      if (args[1] !== '--connect' || args[2] !== 'qemu:///system') state.violations.push(`virt-xml sans --connect qemu:///system: ${args.join(' ')}`);
+      return res(0, `Domain '${args[0]}' defined successfully.\n`);
+    }
+    if (cmd === 'qemu-img' && args[0] === 'resize') return res(0, 'Image resized.\n');
     if (cmd === 'qemu-img') {
       const path = args[args.length - 1];
       return path in state.images ? res(0, JSON.stringify(state.images[path])) : res(1, '', `qemu-img: Could not open '${path}'`);
@@ -130,8 +169,16 @@ export function installFakeSystem(init = {}) {
   /** Sous-commandes virsh qui modifient l'etat */
   state.mutations = () => state.calls
     .filter((c) => c.command === 'virsh' && ['suspend', 'resume', 'reboot', 'reset', 'shutdown', 'start', 'vol-create-as', 'vol-upload',
-      'vol-resize', 'vol-delete', 'define', 'undefine'].includes(c.args[2]))
+      'vol-resize', 'vol-delete', 'define', 'undefine', 'setvcpus', 'setmaxmem', 'setmem', 'autostart', 'desc'].includes(c.args[2]))
     .map((c) => c.args[2]);
+  /** Toutes les commandes qui ecrivent, en une ligne chacune (virsh sans son `-c URI`, virt-xml sans son `--connect URI`) */
+  state.writes = () => state.calls
+    .filter((c) => !(c.command === 'virsh' && ['domstate', 'dumpxml', 'domblklist', 'domblkinfo', 'dominfo', 'list', 'net-list', 'vol-list', 'vol-path', 'vol-pool', 'snapshot-current'].includes(c.args[2])))
+    .map((c) => {
+      if (c.command === 'virsh') return `virsh ${c.args.slice(2).join(' ')}`;
+      if (c.command === 'virt-xml') return `virt-xml ${[c.args[0], ...c.args.slice(3)].join(' ')}`;
+      return `${c.command} ${c.args.join(' ')}`;
+    });
   return state;
 }
 

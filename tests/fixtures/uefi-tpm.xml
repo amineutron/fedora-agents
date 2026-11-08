@@ -1,0 +1,74 @@
+<domain type="kvm">
+  <name>win-lab</name>
+  <uuid>00000000-0000-0000-0000-000000000000</uuid>
+  <description>Poste Windows de test</description>
+  <memory unit="KiB">6291456</memory>
+  <currentMemory unit="KiB">6291456</currentMemory>
+  <vcpu placement="static">4</vcpu>
+  <os firmware="efi">
+    <type machine="pc-q35-10.1" arch="x86_64">hvm</type>
+    <firmware>
+      <feature enabled="no" name="enrolled-keys"/>
+      <feature name="secure-boot" enabled="yes"/>
+    </firmware>
+    <loader readonly="yes" secure="yes" type="pflash" format="qcow2">/usr/share/edk2/ovmf/OVMF_CODE_4M.secboot.qcow2</loader>
+    <nvram template="/usr/share/edk2/ovmf/OVMF_VARS_4M.secboot.qcow2" templateFormat="qcow2" format="qcow2">/var/lib/libvirt/qemu/nvram/win-lab_VARS.qcow2</nvram>
+    <boot dev="cdrom"/>
+    <boot dev="hd"/>
+  </os>
+  <features>
+    <acpi/>
+    <apic/>
+    <smm state="on"/>
+  </features>
+  <cpu mode="custom" check="none" match="exact">
+    <model>x86-64-v2</model>
+    <feature policy="require" name="ssbd"/>
+  </cpu>
+  <devices>
+    <emulator>/usr/bin/qemu-system-x86_64</emulator>
+    <disk type="file" device="disk">
+      <driver name="qemu" type="qcow2"/>
+      <source file="/var/lib/libvirt/images/win-lab.qcow2"/>
+      <target bus="sata" dev="sda"/>
+    </disk>
+    <disk type="file" device="cdrom">
+      <driver name="qemu" type="raw"/>
+      <source file="/var/lib/libvirt/images/win11.iso"/>
+      <target dev="sdb" bus="sata"/>
+      <readonly/>
+    </disk>
+    <interface type="bridge">
+      <mac address="52:54:00:00:00:00"/>
+      <source bridge="br0"/>
+      <model type="e1000e"/>
+    </interface>
+    <hostdev mode="subsystem" type="pci" managed="yes">
+      <source>
+        <address domain="0x0000" bus="0x01" slot="0x00" function="0x0"/>
+      </source>
+    </hostdev>
+    <hostdev mode="subsystem" type="usb" managed="yes">
+      <source>
+        <vendor id="0x046d"/>
+        <product id="0xc52b"/>
+      </source>
+    </hostdev>
+    <hostdev type="usb" mode="subsystem" managed="yes">
+      <source>
+        <product id="0x1B7F"/>
+        <vendor id="0x1b1c"/>
+      </source>
+    </hostdev>
+    <tpm model="tpm-crb">
+      <backend type="emulator" version="2.0"/>
+    </tpm>
+    <graphics type="vnc" port="-1" autoport="yes" listen="127.0.0.1">
+      <listen type="address" address="127.0.0.1"/>
+    </graphics>
+    <video>
+      <model type="qxl" ram="65536" vram="65536" vgamem="16384" heads="1" primary="yes"/>
+    </video>
+    <memballoon model="virtio"/>
+  </devices>
+</domain>

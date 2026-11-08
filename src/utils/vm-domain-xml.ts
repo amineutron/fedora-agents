@@ -16,6 +16,16 @@ export function xmlEscape(value: string): string {
     .replace(/'/g, '&apos;');
 }
 
+/** Inverse de xmlEscape : les cinq entites predefinies, telles que libvirt les ecrit. */
+export function xmlUnescape(value: string): string {
+  return value
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, '&');
+}
+
 // Chemin de volume rendu par `virsh vol-path` : absolu, caracteres surs, pas de `..`
 const VOLUME_PATH = /^\/[A-Za-z0-9._/-]+$/;
 export function isSafeVolumePath(path: string): boolean {
@@ -90,7 +100,7 @@ ${spec.disks.map(diskXml).join('\n')}
       <target type='isa-serial' port='0'>
         <model name='isa-serial'/>
       </target>
-      <log file='${xmlEscape(spec.serialLogPath)}' append='off'/>
+      <log file='${xmlEscape(spec.serialLogPath)}' append='on'/>
     </serial>
     <console type='pty'>
       <target type='serial' port='0'/>
@@ -116,17 +126,23 @@ ${spec.disks.map(diskXml).join('\n')}
 
 // ----- lecture du XML d'une VM -----
 
-function attrs(tag: string): Record<string, string> {
+export interface XmlElement {
+  attrs: Record<string, string>;
+  body: string;
+}
+
+/** Attributs d'une balise ouvrante (entites decodees), quel que soit leur ordre ou le type de guillemets. */
+export function attrs(tag: string): Record<string, string> {
   const out: Record<string, string> = {};
   for (const m of tag.matchAll(/([A-Za-z_:][\w:.-]*)\s*=\s*(?:'([^']*)'|"([^"]*)")/g)) {
-    out[m[1]] = m[2] ?? m[3] ?? '';
+    out[m[1]] = xmlUnescape(m[2] ?? m[3] ?? '');
   }
   return out;
 }
 
 /** Elements `<name ...>...</name>` ou `<name .../>` : [attributs de l'ouvrante, corps]. */
-function elements(xml: string, name: string): Array<{ attrs: Record<string, string>; body: string }> {
-  const out: Array<{ attrs: Record<string, string>; body: string }> = [];
+export function elements(xml: string, name: string): XmlElement[] {
+  const out: XmlElement[] = [];
   const re = new RegExp(`<${name}(\\s[^>]*?)?(/>|>([\\s\\S]*?)</${name}>)`, 'g');
   for (const m of xml.matchAll(re)) {
     out.push({ attrs: attrs(m[1] ?? ''), body: m[3] ?? '' });

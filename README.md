@@ -74,13 +74,16 @@ fedora-agents/
         vm-create.ts        vm_create_from_image
         vm-image-fetch.ts   vm_image_fetch
         vm-console.ts       vm_console, vm_console_log
+        vm-hardware.ts      vm_hardware (lecture du materiel)
+        vm-edit.ts          vm_edit (vcpus, memoire, cpu, firmware, TPM, secure boot, demarrage, USB, affichage, reseau, disque)
     utils/
       executor.ts     -- execution des scripts bash avec retry, timeout, gestion erreurs
       validation.ts   -- schemas Zod pour tous les parametres d'outils
-      runner.ts       -- couture d'execution des outils hub (virsh, qemu-img, xorriso, virt-builder, curl) :
+      runner.ts       -- couture d'execution des outils hub (virsh, virt-xml, qemu-img, xorriso, virt-builder, curl) :
                          l'executeur reel en production, un faux dans les tests (setRunner)
       vm-hub-schemas.ts, vm-images.ts (catalogue interne d'images), vm-domain-xml.ts, cloud-init.ts,
-      snapshot-current.ts, virsh.ts -- schemas et fonctions pures des outils hub
+      snapshot-current.ts, virsh.ts, vm-hardware-xml.ts (lecture du materiel dans le XML),
+      vm-edit-plan.ts (plan de commandes de vm_edit) -- schemas et fonctions pures des outils hub
 ```
 
 ## Outils MCP exposes
@@ -126,7 +129,11 @@ Ces outils ne passent pas par un script bash : ils pilotent libvirt directement 
 | `vm_create_from_image` | `name`, `image_id`, `vcpus` (2), `memory_mib` (conseil du catalogue), `disk_gb` (conseil du catalogue), `network` (`default`), `ssh_key`, `hostname`, `user`, `start` (faux), `dry_run` (faux) | Cree et definit une VM depuis une image du catalogue (voir ci-dessous) |
 | `vm_image_fetch` | `image_id` | Telecharge une image cloud du catalogue dans `VM_IMAGES_DIR` |
 | `vm_console` | `vm_name`, `type` (`spice`, `vnc` ou `auto`) | Adresse de la console graphique d'une VM allumee : socket Unix (`transport: unix`) ou `127.0.0.1:port` (`transport: tcp`), avec `uri` ; `public: true` et un `warning` si l'ecoute n'est pas locale. N'ouvre aucun port et ne pont pas en websocket (a la charge de l'appelant) |
-| `vm_console_log` | `vm_name`, `lines` (100, 1 a 2000) | Dernieres lignes du journal du port serie declare dans le XML de la VM (`<log file>` ou serie de type fichier), 512 Ko au plus, limite a `/var/log/libvirt`, `/var/lib/libvirt`, `VM_IMAGES_DIR` et `VM_CONSOLE_LOG_DIRS` |
+| `vm_console_log` | `vm_name`, `lines` (100, 1 a 2000) | Dernieres lignes du journal du port serie declare dans le XML de la VM (`<log file>` ou serie de type fichier), 512 Ko au plus, limite a `/var/log/libvirt`, `/var/lib/libvirt`, `VM_IMAGES_DIR` et `VM_CONSOLE_LOG_DIRS`. Echec : `reason` vaut `absent` (`VALIDATION_ERROR` : VM definie sans journal ou jamais demarree), `droits` ou `hors_racines` (`PERMISSION_DENIED`) |
+| `vm_hardware` | `vm_name` | Lecture seule du materiel declare (`virsh dumpxml`, `dominfo`, `domblkinfo`) : `hardware.{cpu_model, firmware (bios/uefi), secure_boot, tpm, boot_order[], boot_order_source, display (spice/vnc/none), network, disks[{target, path, capacity_gb}], usb[vendor:product], vcpus, memory_mib, autostart, description}` |
+| `vm_edit` | `vm_name` + au moins un champ : `vcpus` (1-32), `memory_mib` (512-65536), `autostart`, `description` (256 car., vide = effacer), `cpu_model` (`host-passthrough`, `host-model`, `x86-64-v2`, `qemu64`), `firmware` (`bios`, `uefi`), `tpm`, `secure_boot` (avec `firmware=uefi`), `boot_order` (`hd`, `cdrom`, `network`, sans doublon), `usb_attach` / `usb_detach` (`vendor:product`), `display` (`spice`, `vnc`), `network`, `disk_grow_gb` (1-2048 Gio, agrandissement seul, disque = volume d'un pool libvirt) | Voir ci-dessous. Reponse : `changes[]` (libelles), `applied[]` (champs), `skipped[]` (deja conforme), `needs_restart`, `hot[]` (appliques a chaud), `message` ; en echec : `failed[]`, `applied[]` de ce qui est deja fait |
+
+`vm_edit` : **VM arretee obligatoire** pour `vcpus`, `memory_mib`, `cpu_model`, `firmware`, `tpm`, `secure_boot`, `disk_grow_gb` (refus `VALIDATION_ERROR` avant toute modification). Tout est valide d'abord (schema, disque reconnu comme volume d'un pool par `virsh vol-pool`), puis applique champ par champ dans un ordre fixe ; a la premiere erreur l'outil s'arrete et rend `applied`. Commandes : `virsh setvcpus --maximum --config` puis `--config` (les deux ordres sont essayes, libvirt refusant l'un ou l'autre selon le sens du changement), `virsh setmaxmem` / `setmem --config` (KiB), `virsh autostart [--disable]`, `virsh desc --config --new-desc` ; le reste par `virt-xml --connect qemu:///system` : `--edit --cpu <modele>`, `--edit --boot uefi` (secure boot : les anciens `<firmware>`, `<loader>` et `<nvram>` sont effaces puis `uefi,loader.secure=yes|no,firmware.feature0.name=secure-boot,firmware.feature0.enabled=yes|no` ; le fichier NVRAM existant est conserve, `virsh start --reset-nvram` si l'invite ne demarre plus), retour au bios en UNE definition : `--edit --xml ./os/@firmware= --xml xpath.delete=./os/loader --xml xpath.delete=./os/nvram --xml xpath.delete=./os/firmware --xml xpath.delete=./features/smm` (`--xml` = xpath sur tout le domaine ; l'attribut `firmware` de `<os>` est RETIRE, pas mis a `bios` : Fedora ne livre aucun descripteur SeaBIOS dans `/usr/share/qemu/firmware`, seulement edk2-ovmf, donc la selection automatique `firmware='bios'` echoue toujours (« Unable to find 'bios' firmware ») alors qu'un `<os>` sans attribut demarre SeaBIOS directement ; le `<smm state='on'/>` pose par libvirt pour le secure boot doit partir dans la meme definition ; `xpath.delete=./os/@firmware` est a proscrire, il supprime tout `<os>` ; sans effet (`skipped`) si la VM est deja en bios ; le fichier NVRAM reste sur le disque), `--add-device --tpm default` / `--remove-device --tpm all`, `--edit --boot hd,cdrom,network` (les `<boot order>` par peripherique sont effaces d'abord), `--edit --graphics <type>` ou `--add-device --graphics <type>,listen=127.0.0.1`, `--edit --network network=<nom>`, USB : `--add-device --hostdev type=usb,source.startupPolicy=optional,xpath...` (par identifiant, sans que le peripherique soit branche ; `optional` : la VM demarre meme s'il est absent, sinon le demarrage echouerait tant qu'il n'est pas detache) / `--remove-device --hostdev <rang>`. `network`, `usb_attach`, `usb_detach` recoivent `--update` quand la VM tourne (effet immediat, `hot`). `disk_grow_gb` : par libvirt, car le volume appartient a libvirt et l'utilisateur n'a que le groupe (`qemu-img resize` direct : `Permission denied`) : `virsh vol-pool <chemin>` (refus `VALIDATION_ERROR` si le premier disque fichier n'est le volume d'aucun pool), capacite actuelle par `virsh domblkinfo`, puis `virsh vol-resize <chemin> <capacite + N Gio en octets> --pool <pool>` et `virsh pool-refresh <pool>` ; le systeme de fichiers de l'invite reste a agrandir.
 
 `vm_create_from_image` selon le format de l'image (`fmt` du catalogue) :
 
@@ -146,7 +153,9 @@ Prerequis des outils hub, en plus de `virsh` : `qemu-img` (lecture de l'image), 
 | `VM_HUB_POOL` | pool libvirt qui recoit les disques de `vm_create_from_image` | `default` |
 | `VM_CONSOLE_LOG_DIRS` | dossiers supplementaires (separes par `:`) ou `vm_console_log` peut lire | aucun |
 
-Pour que `vm_console_log` lise le journal des VMs creees par l'outil, l'utilisateur doit pouvoir lire `/var/log/libvirt/qemu` (reserve a root par defaut) : une seule fois, a la main, par exemple `sudo setfacl -m u:$USER:rx /var/log/libvirt /var/log/libvirt/qemu && sudo setfacl -d -m u:$USER:r /var/log/libvirt/qemu`. Sans cela l'outil repond `PERMISSION_DENIED` avec la liste des dossiers autorises.
+Pour que `vm_console_log` lise le journal des VMs creees par l'outil, l'utilisateur doit pouvoir lire `/var/log/libvirt/qemu` (reserve a root par defaut) : une seule fois, a la main, par exemple `sudo setfacl -m u:$USER:rx /var/log/libvirt /var/log/libvirt/qemu && sudo setfacl -d -m u:$USER:r /var/log/libvirt/qemu`. Sans cela l'outil repond `PERMISSION_DENIED` (`reason: droits`) avec la liste des dossiers autorises ; `reason: absent` (`VALIDATION_ERROR`) signifie au contraire que le fichier n'existe pas : VM definie sans `<log file>` ou jamais demarree. Les VMs creees par `vm_create_from_image` declarent `<serial type='pty'><log file='/var/log/libvirt/qemu/<nom>-serial0.log' append='on'/>...` et la `<console type='pty'>` associee.
+
+Prerequis supplementaire de `vm_edit` : `virt-xml` (paquet `virt-install`).
 
 ### Backup Manager
 
