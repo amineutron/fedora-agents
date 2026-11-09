@@ -19,6 +19,14 @@
 
 TRACKING_API="${TRACKING_API:-http://127.0.0.1:8765}"
 
+# Jeton local exige en ecriture par l'API (fichier 0600 ecrit par api.py au demarrage).
+# Sans lui chaque ecriture recoit un 401, que curl -s laisse passer sans bruit.
+_tracking_token() {
+    { [[ -n "${TRACKING_TOKEN_FILE:-}" ]] && cat "$TRACKING_TOKEN_FILE" 2>/dev/null; } ||
+        cat /run/tracking/token 2>/dev/null ||
+        cat "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/tracking/token" 2>/dev/null
+}
+
 # Cree une nouvelle session de tracking et exporte TRACKING_ID
 # Usage: tracking_init "Nom de la tache" "template" total "unite"
 # Exemple: tracking_init "Clone neutron-template" "machine" 100 " %"
@@ -35,6 +43,7 @@ tracking_init() {
     local response
     response=$(curl -s -X POST \
         -H "Content-Type: application/json" \
+        -H "Authorization: Bearer $(_tracking_token)" \
         -d "$payload" \
         "${TRACKING_API}/sessions" \
         --max-time 3 2>/dev/null || echo "{}")
@@ -55,6 +64,7 @@ _tracking_put() {
     curl -s -o /dev/null \
         -X PUT \
         -H "Content-Type: application/json" \
+        -H "Authorization: Bearer $(_tracking_token)" \
         -d "$payload" \
         "${TRACKING_API}/sessions/${TRACKING_ID}" \
         --max-time 2 \
